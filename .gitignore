@@ -1,0 +1,7 @@
+*.xlsx
+
+venv 
+
+dist/
+.dist/
+build/
