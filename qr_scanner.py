@@ -12,6 +12,29 @@ from PIL import Image, ImageTk, ImageDraw
 import os
 from dataclasses import dataclass, asdict
 
+# --- Auto-Updater Dependencies ---
+import requests
+import threading
+import time
+
+# --- Configuration for Updater ---
+# 1. Define the current version of the running application
+CURRENT_VERSION = "1.0.0" 
+# 2. Define the URL where the latest version number is stored (e.g., a raw file on GitHub)
+#    IMPORTANT: Replace this with the actual URL to a plain text file containing ONLY the latest version number (e.g., "1.0.1")
+REMOTE_VERSION_URL = "https://raw.githubusercontent.com/username/repo/main/VERSION.txt" # Placeholder URL
+
+# --- Utility Functions for Updater ---
+
+def version_to_tuple(version_str):
+    """Converts a version string (e.g., '1.0.5') to a tuple of integers (1, 0, 5) for comparison."""
+    try:
+        return tuple(map(int, version_str.split('.')))
+    except ValueError:
+        print(f"Error parsing version string: {version_str}")
+        return (0, 0, 0) # Fallback
+
+
 @dataclass
 class ProductData:
     """Data structure for product information - Entrée type"""
@@ -48,6 +71,14 @@ class QRScannerApp:
         self.products_data = []
         self.excel_file = None
         self.data_type = "Entrée"  # Can be "Entrée" or "Sortie"
+
+        # Updater variables
+        self.remote_version = None
+        self.update_dialog = None
+        self.update_status_label = None
+        self.update_version_label = None
+        self.update_button_in_dialog = None
+
         
         # Scanner state
         self.scanning = False
@@ -82,7 +113,25 @@ class QRScannerApp:
         
         self.setup_ui()
         self.setup_scanner_listener()
+        self.setup_updater_menu() # Setup the new Help menu item
     
+    # --- New Updater UI Setup ---
+
+
+    def setup_updater_menu(self):
+        """Adds the 'Check for Updates' menu item."""
+        menubar = tk.Menu(self.root)
+        self.root.config(menu=menubar)
+
+        # Existing menus (File, Edit, etc. would go here)
+        
+        help_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Aide", menu=help_menu)
+        
+        # Add the update command
+        help_menu.add_command(label="Vérifier les Mises à Jour...", command=self.start_check_thread)
+        
+        
     def setup_ui(self):
         """Setup the user interface"""
         # Main frame
@@ -233,6 +282,13 @@ class QRScannerApp:
         
         ttk.Button(qr_frame, text="Generate QR from Selected Row", 
                   command=self.generate_qr_from_selection).grid(row=0, column=0, padx=(0, 5))
+        
+        # Minimal skeleton to ensure the app runs
+        main_label = ttk.Label(self.root, text="QR Scanner App", font=('Inter', 24, 'bold'))
+        # main_label.pack(pady=50)
+        version_label = ttk.Label(self.root, text=f"Version Actuelle: {CURRENT_VERSION}", font=('Inter', 10))
+        # version_label.pack(pady=10)
+        
         
         # Focus scanner input
         self.scanner_entry.focus_set()
@@ -1929,7 +1985,132 @@ CUKI I 06/2025"""
         dialog.wait_window()
         
         return selected_client
+    def start_check_thread(self):
+        """Initializes the modal dialog and starts the version check in a separate thread."""
+        
+        # 1. Create Modal Dialog
+        self.update_dialog = tk.Toplevel(self.root)
+        self.update_dialog.title("Vérification des mises à jour")
+        self.update_dialog.geometry("350x180")
+        self.update_dialog.transient(self.root) # Make it stay above the main window
+        self.update_dialog.grab_set() # Make it modal (block interaction with main window)
+        self.update_dialog.protocol("WM_DELETE_WINDOW", lambda: None) # Disable closing by X button during check
+
+        dialog_frame = ttk.Frame(self.update_dialog, padding=20)
+        dialog_frame.pack(expand=True, fill='both')
+
+        # Status Label
+        self.update_status_label = ttk.Label(dialog_frame, text="Connexion au serveur...", font=('Inter', 10), foreground='orange')
+        self.update_status_label.pack(pady=10)
+        
+        # Remote Version Label
+        self.update_version_label = ttk.Label(dialog_frame, text="", font=('Inter', 12, 'bold'))
+        self.update_version_label.pack(pady=5)
+        
+        # Action Button
+        self.update_button_in_dialog = ttk.Button(dialog_frame, text="Annuler", command=self.update_dialog.destroy)
+        self.update_button_in_dialog.pack(pady=10)
+        
+        # 2. Start Network Check
+        self.update_button_in_dialog.config(state=tk.DISABLED) # Disable button while checking
+        threading.Thread(target=self.check_for_update, daemon=True).start()
+
+    def check_for_update(self):
+        """Fetches the remote version from the server (runs in a separate thread)."""
+        print(f"Checking remote URL: {REMOTE_VERSION_URL}")
+        try:
+            # Simulate network latency
+            time.sleep(1.0)
+            response = requests.get(REMOTE_VERSION_URL, timeout=10)
+            response.raise_for_status() 
+
+            remote_version = response.text.strip()
+            
+            # Schedule the UI update back on the main Tkinter thread
+            self.root.after(0, lambda: self.compare_versions_and_update_ui(remote_version))
+
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Network error: {e.__class__.__name__}"
+            print(error_msg)
+            # Schedule the error message update back on the main Tkinter thread
+            self.root.after(0, lambda: self.handle_check_error(error_msg))
+
+    def handle_check_error(self, message):
+        """Updates UI in case of network error (runs on main thread)."""
+        if self.update_dialog and self.update_dialog.winfo_exists():
+            self.update_version_label.config(text="Échec")
+            self.update_status_label.config(text="Erreur de connexion au serveur.", foreground='red')
+            self.update_button_in_dialog.config(text="Fermer", state=tk.NORMAL, command=self.update_dialog.destroy)
+            messagebox.showerror("Vérification Échouée", f"Impossible de vérifier la mise à jour.\nDétails: {message.split(':')[-1].strip()}")
+
+    def compare_versions_and_update_ui(self, remote_version_str):
+        """Compares versions and updates the UI accordingly (runs on main thread)."""
+        if not (self.update_dialog and self.update_dialog.winfo_exists()):
+            return # Dialog was closed prematurely
+            
+        self.remote_version = remote_version_str
+        self.update_version_label.config(text=f"Remote: V{remote_version_str}", foreground='#0a84ff')
+        
+        current = version_to_tuple(CURRENT_VERSION)
+        remote = version_to_tuple(remote_version_str)
+
+        if remote > current:
+            self.update_status_label.config(text=f"Mise à jour disponible: {remote_version_str}", foreground='#dc3545')
+            self.update_button_in_dialog.config(text="Télécharger et Installer", state=tk.NORMAL, command=self.download_and_install)
+            self.update_dialog.protocol("WM_DELETE_WINDOW", self.update_dialog.destroy) # Allow closing
+        else:
+            self.update_status_label.config(text=f"Vous utilisez la dernière version ({CURRENT_VERSION}).", foreground='green')
+            self.update_button_in_dialog.config(text="Fermer", state=tk.NORMAL, command=self.update_dialog.destroy)
+            self.update_dialog.protocol("WM_DELETE_WINDOW", self.update_dialog.destroy) # Allow closing
+            # Automatically close success dialog after a few seconds
+            self.root.after(3000, self.update_dialog.destroy)
+
+    def download_and_install(self):
+        """Initiates the simulated download process."""
+        if self.update_dialog and self.update_dialog.winfo_exists():
+            self.update_button_in_dialog.config(state=tk.DISABLED, text="Téléchargement en cours...")
+            self.update_status_label.config(text=f"Début du téléchargement de V{self.remote_version}...", foreground='blue')
+            # Start download simulation in a new thread
+            threading.Thread(target=self._simulate_download, daemon=True).start()
+
+    def _simulate_download(self):
+        """Simulates downloading and installing the new executable/files."""
+        # --- In a real app, replace this with actual file download and installation logic ---
+        time.sleep(3) # Simulate a 3-second download/install process
+        # --- End of real logic replacement ---
+        
+        # Schedule the success message back on the main Tkinter thread
+        self.root.after(0, self._show_update_success)
+
+    def _show_update_success(self):
+        """Shows final success message and prompts for restart."""
+        if self.update_dialog and self.update_dialog.winfo_exists():
+            self.update_status_label.config(text=f"Mise à jour V{self.remote_version} installée!", foreground='darkgreen')
+            self.update_button_in_dialog.config(text="Redémarrer l'Application", state=tk.NORMAL, command=self.restart_app)
+        
+        messagebox.showinfo(
+            "Mise à Jour Terminée",
+            f"Version {self.remote_version} a été téléchargée et installée. L'application va maintenant redémarrer."
+        )
+
+    def restart_app(self):
+        """Simulates application restart."""
+        if self.update_dialog and self.update_dialog.winfo_exists():
+            self.update_dialog.destroy()
+            
+        print("Application shutting down to restart...")
+        # In a real scenario, this is where you would launch the new version executable 
+        # using 'subprocess.Popen' and then immediately exit the current application.
+        
+        messagebox.showinfo("Simulation de Redémarrage", "L'application va maintenant redémarrer.")
+        self.root.destroy()
     
+    # --- Existing Methods (Omitted for brevity, assumed to be here) ---
+
+    # NOTE: The methods for handling Excel, QR generation, client selection, etc. 
+    # (e.g., self.load_excel_data, self.generate_qr_code, self.select_client)
+    # are assumed to be present here from your original file.
+
     def run(self):
         """Start the application"""
         self.root.mainloop()
