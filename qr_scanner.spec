@@ -1,16 +1,25 @@
 # -*- mode: python ; coding: utf-8 -*-
-
+import sys
+import os
 
 a = Analysis(
     ['qr_scanner.py'],
     pathex=[],
     binaries=[],
-    datas=[],
-    hiddenimports=[],
+    datas=[('qrcodescan.ico', '.'), ('logo_diardzair.jpg', '.')],
+    hiddenimports=[
+        'PIL', 'PIL._tkinter_finder', 'tkinter', 'tkinter.ttk', 
+        'pandas', 'openpyxl', 'requests', 'qrcode', 
+        'win32print', 'win32ui', 'win32con',
+        'tkinter.messagebox', 'tkinter.filedialog',
+        'PIL.Image', 'PIL.ImageTk', 'PIL.ImageDraw',
+        'dataclasses', 'datetime', 'threading',
+        'subprocess', 'shutil', 'logging'
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['matplotlib', 'numpy.distutils', 'test', 'unittest'],
     noarchive=False,
     optimize=0,
 )
@@ -19,16 +28,13 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='qr_scanner',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
-    upx_exclude=[],
-    runtime_tmpdir=None,
+    upx=False,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -36,4 +42,14 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=['qrcodescan.ico'],
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name='qr_scanner'
 )

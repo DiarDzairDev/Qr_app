@@ -10,20 +10,67 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from PIL import Image, ImageTk, ImageDraw
 import os
+import sys # Import sys to get the executable path
+import subprocess # Import subprocess for launching the new instance
 from dataclasses import dataclass, asdict
+import logging
+import builtins
 
 # --- Auto-Updater Dependencies ---
 import requests
 import threading
 import time
+import shutil
+from datetime import datetime
 
 # --- Configuration for Updater ---
 # 1. Define the current version of the running application
-CURRENT_VERSION = "1.0.0" 
+CURRENT_VERSION = "1.0.2" 
 # 2. Define the URL where the latest version number is stored (e.g., a raw file on GitHub)
 #    IMPORTANT: Replace this with the actual URL to a plain text file containing ONLY the latest version number (e.g., "1.0.1")
-REMOTE_VERSION_URL = "https://raw.githubusercontent.com/DiarDzairDev/Qr_app/main/version.txt" # Placeholder URL
+REMOTE_VERSION_URL = "https://raw.githubusercontent.com/DiarDzairDev/Qr_app/refs/heads/main/version.txt" # Placeholder URL
 
+REMOTE_EXE_URL = "https://github.com/DiarDzairDev/Qr_app/raw/refs/heads/main/dist/qr_scanner/qr_scanner.exe"
+LOCAL_EXE_FILENAME = "qr_scanner.exe"
+
+# --- Logging Configuration ---
+def setup_logging():
+    """Configure logging to redirect all prints to a log file"""
+    # Create logs directory if it doesn't exist
+    if getattr(sys, 'frozen', False):
+        # Running as compiled executable
+        log_dir = os.path.dirname(sys.executable)
+    else:
+        # Running as script
+        log_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    log_file = os.path.join(log_dir, f"qr_scanner_{datetime.now().strftime('%Y%m%d')}.log")
+    
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file, encoding='utf-8'),
+            logging.StreamHandler(sys.stdout)  # Keep console output for development
+        ]
+    )
+    
+    # Create a custom print function that logs
+    def log_print(*args, **kwargs):
+        message = ' '.join(str(arg) for arg in args)
+        logging.info(message)
+    
+    # Replace built-in print with our logging version
+    import builtins
+    builtins.print = log_print
+    
+    logging.info("=" * 50)
+    logging.info(f"QR Scanner Application Started - Version {CURRENT_VERSION}")
+    logging.info("=" * 50)
+
+# Initialize logging at module level
+setup_logging()
 # --- Utility Functions for Updater ---
 
 def version_to_tuple(version_str):
@@ -33,7 +80,24 @@ def version_to_tuple(version_str):
     except ValueError:
         print(f"Error parsing version string: {version_str}")
         return (0, 0, 0) # Fallback
-
+def resource_path(relative_path):
+    """
+    Get the absolute path to resource, needed for PyInstaller compilation.
+    This handles files bundled inside the temporary _MEIPASS directory of the EXE.
+    """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except AttributeError:
+        # Running as a normal Python script or in development
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            # Alternative check for PyInstaller
+            base_path = sys._MEIPASS
+        else:
+            # Running as script or in development
+            base_path = os.path.dirname(os.path.abspath(__file__))
+    
+    return os.path.join(base_path, relative_path)
 
 @dataclass
 class ProductData:
@@ -63,6 +127,17 @@ class QRScannerApp:
         self.root = tk.Tk()
         self.root.title("QR Code Scanner & Generator")
         self.root.geometry("1280x720")
+        
+        # --- FIX: Load Icon using resource_path ---
+        # Assuming you have 'qrcodescan.ico' in the same folder as the script 
+        # (and you bundled it with PyInstaller using the .spec file)
+        try:
+            icon_path = 'qrcodescan.ico'
+            self.root.iconbitmap('qrcodescan.ico')
+        except Exception as e:
+            # If icon fails to load, the app still starts
+            print(f"Warning: Could not load application icon. Error: {e}")
+        # ------------------------------------------
         
         # Configure encoding for French characters
         self.root.option_add('*Font', 'TkDefaultFont')
@@ -1991,7 +2066,7 @@ CUKI I 06/2025"""
         # 1. Create Modal Dialog
         self.update_dialog = tk.Toplevel(self.root)
         self.update_dialog.title("Vérification des mises à jour")
-        self.update_dialog.geometry("350x180")
+        self.update_dialog.geometry("350x220") # Increased size to accommodate progress bar
         self.update_dialog.transient(self.root) # Make it stay above the main window
         self.update_dialog.grab_set() # Make it modal (block interaction with main window)
         self.update_dialog.protocol("WM_DELETE_WINDOW", lambda: None) # Disable closing by X button during check
@@ -2006,6 +2081,11 @@ CUKI I 06/2025"""
         # Remote Version Label
         self.update_version_label = ttk.Label(dialog_frame, text="", font=('Inter', 12, 'bold'))
         self.update_version_label.pack(pady=5)
+        
+        # Progress Bar (Starts hidden)
+        self.download_progress_bar = ttk.Progressbar(dialog_frame, orient='horizontal', mode='determinate')
+        self.download_progress_bar.pack(fill='x', pady=10)
+        self.download_progress_bar.pack_forget() # Hide initially
         
         # Action Button
         self.update_button_in_dialog = ttk.Button(dialog_frame, text="Annuler", command=self.update_dialog.destroy)
@@ -2066,21 +2146,176 @@ CUKI I 06/2025"""
             self.root.after(3000, self.update_dialog.destroy)
 
     def download_and_install(self):
-        """Initiates the simulated download process."""
+        """Initiates the real download process."""
         if self.update_dialog and self.update_dialog.winfo_exists():
+            # Show the progress bar and configure it for the download
+            self.download_progress_bar.pack(fill='x', pady=10)
+            self.download_progress_bar.config(mode='determinate', value=0)
+            
             self.update_button_in_dialog.config(state=tk.DISABLED, text="Téléchargement en cours...")
             self.update_status_label.config(text=f"Début du téléchargement de V{self.remote_version}...", foreground='blue')
-            # Start download simulation in a new thread
-            threading.Thread(target=self._simulate_download, daemon=True).start()
+            
+            # Start download in a new thread
+            threading.Thread(target=self._download_and_install, daemon=True).start()
 
-    def _simulate_download(self):
-        """Simulates downloading and installing the new executable/files."""
-        # --- In a real app, replace this with actual file download and installation logic ---
-        time.sleep(3) # Simulate a 3-second download/install process
-        # --- End of real logic replacement ---
+    def _download_and_install(self):
+        """Downloads the new executable and saves it to the current running directory with progress."""
+        print(f"Downloading new EXE from: {REMOTE_EXE_URL}")
         
-        # Schedule the success message back on the main Tkinter thread
-        self.root.after(0, self._show_update_success)
+        # 1. Determine the path to save the new executable
+        if getattr(sys, 'frozen', False):
+            install_dir = os.path.dirname(sys.executable)
+        else:
+            install_dir = os.path.dirname(os.path.abspath(__file__))
+
+        save_path = os.path.join(install_dir, LOCAL_EXE_FILENAME)
+        
+        try:
+            print(f"Starting download from: {REMOTE_EXE_URL}")
+            print(f"Saving to: {save_path}")
+            
+            # 2. Download the file chunk by chunk (streaming)
+            print("Initiating HTTP request...")
+            response = requests.get(REMOTE_EXE_URL, stream=True, timeout=300)
+            response.raise_for_status()
+            print(f"HTTP request successful, status code: {response.status_code}")
+
+            # Get total file size from header (Content-Length)
+            total_size = int(response.headers.get('content-length', 0))
+            bytes_downloaded = 0
+            print(f"Total file size: {total_size} bytes")
+            
+            # Set the progress bar max value (runs on main thread)
+            print("Setting progress bar maximum value...")
+            self.root.after(0, lambda: self.download_progress_bar.config(maximum=total_size))
+
+            # 3. Write the content to a temporary file first
+            temp_path = save_path + ".new"
+            print(f"Creating temporary file: {temp_path}")
+            
+            with open(temp_path, 'wb') as f:
+                print("Starting to download chunks...")
+                chunk_count = 0
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+                    bytes_downloaded += len(chunk)
+                    chunk_count += 1
+                    
+                    # Print progress every 100 chunks to avoid spam
+                    if chunk_count % 100 == 0:
+                        progress_percent = (bytes_downloaded / total_size * 100) if total_size > 0 else 0
+                        print(f"Downloaded {bytes_downloaded}/{total_size} bytes ({progress_percent:.1f}%)")
+                        
+                        # Update progress bar (runs on main thread)
+                        self.root.after(0, lambda val=bytes_downloaded: self.download_progress_bar.config(value=val))
+                
+            print(f"Download completed. Total chunks: {chunk_count}")
+            print(f"Final downloaded size: {bytes_downloaded} bytes")
+            
+            # Final progress update
+            if total_size > 0:
+                self.root.after(0, lambda: self.download_progress_bar.config(value=total_size))
+            
+            print("Creating update script for Windows...")
+            
+            # 4. Create a batch script that will replace the executable after the current process exits
+            batch_script_path = os.path.join(install_dir, "update_app.bat")
+            current_exe_name = os.path.basename(save_path)
+            
+            batch_content = f"""@echo off
+echo Waiting for application to close...
+timeout /t 2 /nobreak >nul
+
+echo Replacing executable...
+move /y "{temp_path}" "{save_path}"
+
+if %errorlevel% equ 0 (
+    echo Update successful! Restarting application...
+    start "" "{save_path}"
+) else (
+    echo Update failed! Error code: %errorlevel%
+    pause
+)
+
+echo Cleaning up...
+del "%~f0"
+"""
+            
+            with open(batch_script_path, 'w', encoding='utf-8') as batch_file:
+                batch_file.write(batch_content)
+            
+            print(f"Update script created at: {batch_script_path}")
+            
+            # 5. Schedule the execution of the update script
+            self.root.after(0, lambda: self._execute_update_script(batch_script_path))
+
+
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Download error: {e.__class__.__name__}"
+            print(error_msg)
+            self.root.after(0, lambda: self._handle_download_error(error_msg))
+            
+        except OSError as e:
+            error_msg = f"File replacement error (is the EXE locked?): {e}"
+            print(error_msg)
+            self.root.after(0, lambda: self._handle_download_error(error_msg))
+    
+    def _execute_update_script(self, batch_script_path):
+        """Execute the batch script to update the application (runs on main thread)."""
+        if self.update_dialog and self.update_dialog.winfo_exists():
+            self.update_status_label.config(text=f"Mise à jour V{self.remote_version} prête!", foreground='darkgreen')
+            self.update_button_in_dialog.config(text="Installer et Redémarrer", state=tk.NORMAL, 
+                                              command=lambda: self._launch_update_script(batch_script_path))
+        
+        messagebox.showinfo(
+            "Mise à Jour Prête",
+            f"Version {self.remote_version} a été téléchargée avec succès.\n"
+            f"Cliquez sur 'Installer et Redémarrer' pour finaliser la mise à jour."
+        )
+    
+    def _launch_update_script(self, batch_script_path):
+        """Launch the update script and close the application."""
+        try:
+            import platform
+            
+            print(f"Launching update script: {batch_script_path}")
+            
+            # Close the update dialog first
+            if self.update_dialog and self.update_dialog.winfo_exists():
+                self.update_dialog.destroy()
+            
+            # Launch the batch script in detached mode
+            if platform.system() == "Windows":
+                # Use CREATE_NEW_PROCESS_GROUP to detach the process
+                subprocess.Popen(['cmd', '/c', batch_script_path], 
+                               creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+            else:
+                # For other systems (shouldn't happen in this context)
+                subprocess.Popen(['bash', batch_script_path])
+            
+            print("Update script launched successfully")
+            
+            # Close the main application
+            self.root.quit()
+            self.root.destroy()
+            
+        except Exception as e:
+            print(f"Error launching update script: {e}")
+            messagebox.showerror("Erreur de Mise à Jour", 
+                               f"Impossible de lancer le script de mise à jour: {str(e)}")
+    
+    def _handle_download_error(self, message):
+        """Updates UI in case of download/install error (runs on main thread)."""
+        if self.update_dialog and self.update_dialog.winfo_exists():
+            # Reset and hide progress bar
+            self.download_progress_bar.config(value=0)
+            self.download_progress_bar.pack_forget()
+            
+            self.update_version_label.config(text="Échec du téléchargement")
+            self.update_status_label.config(text="Erreur lors du téléchargement/remplacement du fichier.", foreground='red')
+            self.update_button_in_dialog.config(text="Fermer", state=tk.NORMAL, command=self.update_dialog.destroy)
+            messagebox.showerror("Erreur de Mise à Jour", 
+                                 "Le téléchargement ou l'installation a échoué. Veuillez réessayer ou télécharger manuellement.")
 
     def _show_update_success(self):
         """Shows final success message and prompts for restart."""
@@ -2094,16 +2329,43 @@ CUKI I 06/2025"""
         )
 
     def restart_app(self):
-        """Simulates application restart."""
+        """
+        Launches a new instance of the application using subprocess and then 
+        terminates the current instance. This achieves a true restart.
+        
+        FIX: Sets the working directory (cwd) for the new process to ensure it 
+        can find associated files like icons, data, or DLLs.
+        """
         if self.update_dialog and self.update_dialog.winfo_exists():
             self.update_dialog.destroy()
             
         print("Application shutting down to restart...")
-        # In a real scenario, this is where you would launch the new version executable 
-        # using 'subprocess.Popen' and then immediately exit the current application.
         
-        messagebox.showinfo("Simulation de Redémarrage", "L'application va maintenant redémarrer.")
+        try:
+            if getattr(sys, 'frozen', False):
+                # Compiled executable: app_path is the EXE path
+                app_path = sys.executable
+                # Set cwd to the directory of the executable
+                working_dir = os.path.dirname(app_path)
+            else:
+                # Running as a script: app_path includes interpreter and script path
+                app_path = [sys.executable, os.path.abspath(__file__)] 
+                # Set cwd to the script's directory
+                working_dir = os.path.dirname(os.path.abspath(__file__))
+            
+            # Launch the new process with the correct working directory (cwd)
+            subprocess.Popen(app_path, cwd=working_dir)
+            print(f"Launched new instance: {app_path} with cwd: {working_dir}")
+            
+        except Exception as e:
+            print(f"Error launching new application instance: {e}")
+            messagebox.showerror("Erreur de Redémarrage", 
+                                 f"Impossible de lancer la nouvelle version. Veuillez la démarrer manuellement. Erreur: {e}")
+
+        # Terminate the current application instance immediately after launching the new one
         self.root.destroy()
+        # Optionally, exit the Python interpreter process if running as a script
+        # sys.exit(0)
     
     # --- Existing Methods (Omitted for brevity, assumed to be here) ---
 
