@@ -19,10 +19,10 @@ import time
 
 # --- Configuration for Updater ---
 # 1. Define the current version of the running application
-CURRENT_VERSION = "1.0.0" 
+CURRENT_VERSION = "1.0.1" 
 # 2. Define the URL where the latest version number is stored (e.g., a raw file on GitHub)
 #    IMPORTANT: Replace this with the actual URL to a plain text file containing ONLY the latest version number (e.g., "1.0.1")
-REMOTE_VERSION_URL = "https://raw.githubusercontent.com/username/repo/main/VERSION.txt" # Placeholder URL
+REMOTE_VERSION_URL = "https://raw.githubusercontent.com/DiarDzairDev/Qr_app/main/version.txt" # Placeholder URL
 
 # --- Utility Functions for Updater ---
 
