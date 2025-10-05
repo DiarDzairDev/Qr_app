@@ -25,7 +25,7 @@ from datetime import datetime
 
 # --- Configuration for Updater ---
 # 1. Define the current version of the running application
-CURRENT_VERSION = "1.0.3" 
+CURRENT_VERSION = "1.0.4" 
 # 2. Define the URL where the latest version number is stored (e.g., a raw file on GitHub)
 #    IMPORTANT: Replace this with the actual URL to a plain text file containing ONLY the latest version number (e.g., "1.0.1")
 REMOTE_VERSION_URL = "https://raw.githubusercontent.com/DiarDzairDev/Qr_app/refs/heads/main/version.txt" # Placeholder URL
@@ -2208,9 +2208,14 @@ CUKI I 06/2025"""
                         
                         # Update progress bar (runs on main thread)
                         self.root.after(0, lambda val=bytes_downloaded: self.download_progress_bar.config(value=val))
-                
             print(f"Download completed. Total chunks: {chunk_count}")
             print(f"Final downloaded size: {bytes_downloaded} bytes")
+            
+            # Rename the temporary file to the final ZIP name
+            print(f"Renaming {temp_package_path} to {package_path}")
+            if os.path.exists(package_path):
+                os.remove(package_path)  # Remove existing file if any
+            os.rename(temp_package_path, package_path)
             
             # Final progress update
             if total_size > 0:
@@ -2227,7 +2232,7 @@ echo Waiting for application to close...
 timeout /t 2 /nobreak >nul
 
 echo Extracting new version...
-powershell -Command "Expand-Archive -Path '{temp_package_path}' -DestinationPath '{install_dir}\\temp_update' -Force"
+powershell -Command "Expand-Archive -Path '{package_path}' -DestinationPath '{install_dir}\\temp_update' -Force"
 
 if %errorlevel% equ 0 (
     echo Replacing old files...
@@ -2257,9 +2262,8 @@ if %errorlevel% equ 0 (
         if exist "{install_dir}\\_internal_backup" (
             rmdir /s /q "{install_dir}\\_internal_backup" >nul 2>&1
         )
-        
-        rem Remove temporary files
-        del /q "{temp_package_path}" >nul 2>&1
+          rem Remove temporary files
+        del /q "{package_path}" >nul 2>&1
         rmdir /s /q "{install_dir}\\temp_update" >nul 2>&1
         
         echo Restarting application...
