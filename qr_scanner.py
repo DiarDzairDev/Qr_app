@@ -25,12 +25,13 @@ from datetime import datetime
 
 # --- Configuration for Updater ---
 # 1. Define the current version of the running application
-CURRENT_VERSION = "1.0.2" 
+CURRENT_VERSION = "1.0.3" 
 # 2. Define the URL where the latest version number is stored (e.g., a raw file on GitHub)
 #    IMPORTANT: Replace this with the actual URL to a plain text file containing ONLY the latest version number (e.g., "1.0.1")
 REMOTE_VERSION_URL = "https://raw.githubusercontent.com/DiarDzairDev/Qr_app/refs/heads/main/version.txt" # Placeholder URL
 
-REMOTE_EXE_URL = "https://github.com/DiarDzairDev/Qr_app/raw/refs/heads/main/dist/qr_scanner/qr_scanner.exe"
+REMOTE_PACKAGE_URL = "https://github.com/DiarDzairDev/Qr_app/raw/refs/heads/main/dist/qr_scanner.zip"
+LOCAL_PACKAGE_FILENAME = "qr_scanner_update.zip"
 LOCAL_EXE_FILENAME = "qr_scanner.exe"
 
 # --- Logging Configuration ---
@@ -2156,27 +2157,26 @@ CUKI I 06/2025"""
             self.update_status_label.config(text=f"Début du téléchargement de V{self.remote_version}...", foreground='blue')
             
             # Start download in a new thread
-            threading.Thread(target=self._download_and_install, daemon=True).start()
-
+            threading.Thread(target=self._download_and_install, daemon=True).start()    
     def _download_and_install(self):
-        """Downloads the new executable and saves it to the current running directory with progress."""
-        print(f"Downloading new EXE from: {REMOTE_EXE_URL}")
+        """Downloads the new application package (ZIP) and extracts it with progress."""
+        print(f"Downloading new package from: {REMOTE_PACKAGE_URL}")
         
-        # 1. Determine the path to save the new executable
+        # 1. Determine the path to save the new package
         if getattr(sys, 'frozen', False):
             install_dir = os.path.dirname(sys.executable)
         else:
             install_dir = os.path.dirname(os.path.abspath(__file__))
 
-        save_path = os.path.join(install_dir, LOCAL_EXE_FILENAME)
+        package_path = os.path.join(install_dir, LOCAL_PACKAGE_FILENAME)
         
         try:
-            print(f"Starting download from: {REMOTE_EXE_URL}")
-            print(f"Saving to: {save_path}")
+            print(f"Starting download from: {REMOTE_PACKAGE_URL}")
+            print(f"Saving to: {package_path}")
             
-            # 2. Download the file chunk by chunk (streaming)
+            # 2. Download the ZIP file chunk by chunk (streaming)
             print("Initiating HTTP request...")
-            response = requests.get(REMOTE_EXE_URL, stream=True, timeout=300)
+            response = requests.get(REMOTE_PACKAGE_URL, stream=True, timeout=300)
             response.raise_for_status()
             print(f"HTTP request successful, status code: {response.status_code}")
 
@@ -2190,10 +2190,10 @@ CUKI I 06/2025"""
             self.root.after(0, lambda: self.download_progress_bar.config(maximum=total_size))
 
             # 3. Write the content to a temporary file first
-            temp_path = save_path + ".new"
-            print(f"Creating temporary file: {temp_path}")
+            temp_package_path = package_path + ".temp"
+            print(f"Creating temporary file: {temp_package_path}")
             
-            with open(temp_path, 'wb') as f:
+            with open(temp_package_path, 'wb') as f:
                 print("Starting to download chunks...")
                 chunk_count = 0
                 for chunk in response.iter_content(chunk_size=8192):
@@ -2218,26 +2218,67 @@ CUKI I 06/2025"""
             
             print("Creating update script for Windows...")
             
-            # 4. Create a batch script that will replace the executable after the current process exits
+            # 4. Create a batch script that will extract the ZIP and replace all files
             batch_script_path = os.path.join(install_dir, "update_app.bat")
-            current_exe_name = os.path.basename(save_path)
+            current_exe_name = os.path.basename(sys.executable) if getattr(sys, 'frozen', False) else LOCAL_EXE_FILENAME
             
             batch_content = f"""@echo off
 echo Waiting for application to close...
 timeout /t 2 /nobreak >nul
 
-echo Replacing executable...
-move /y "{temp_path}" "{save_path}"
+echo Extracting new version...
+powershell -Command "Expand-Archive -Path '{temp_package_path}' -DestinationPath '{install_dir}\\temp_update' -Force"
 
 if %errorlevel% equ 0 (
-    echo Update successful! Restarting application...
-    start "" "{save_path}"
+    echo Replacing old files...
+    
+    rem Backup current _internal folder if it exists
+    if exist "{install_dir}\\_internal" (
+        echo Backing up _internal folder...
+        move "{install_dir}\\_internal" "{install_dir}\\_internal_backup" >nul 2>&1
+    )
+    
+    rem Copy new files from extracted folder
+    if exist "{install_dir}\\temp_update\\qr_scanner" (
+        echo Copying files from temp_update\\qr_scanner...
+        xcopy /E /Y "{install_dir}\\temp_update\\qr_scanner\\*" "{install_dir}\\" >nul 2>&1
+    ) else if exist "{install_dir}\\temp_update\\_internal" (
+        echo Copying files from temp_update...
+        xcopy /E /Y "{install_dir}\\temp_update\\*" "{install_dir}\\" >nul 2>&1
+    ) else (
+        echo Copying all files from temp_update...
+        xcopy /E /Y "{install_dir}\\temp_update\\*" "{install_dir}\\" >nul 2>&1
+    )
+    
+    if %errorlevel% equ 0 (
+        echo Update successful! Cleaning up...
+        
+        rem Remove backup folder
+        if exist "{install_dir}\\_internal_backup" (
+            rmdir /s /q "{install_dir}\\_internal_backup" >nul 2>&1
+        )
+        
+        rem Remove temporary files
+        del /q "{temp_package_path}" >nul 2>&1
+        rmdir /s /q "{install_dir}\\temp_update" >nul 2>&1
+        
+        echo Restarting application...
+        start "" "{install_dir}\\{current_exe_name}"
+    ) else (
+        echo Update failed! Restoring backup...
+        if exist "{install_dir}\\_internal_backup" (
+            rmdir /s /q "{install_dir}\\_internal" >nul 2>&1
+            move "{install_dir}\\_internal_backup" "{install_dir}\\_internal" >nul 2>&1
+        )
+        echo Error during file replacement. Update aborted.
+        pause
+    )
 ) else (
-    echo Update failed! Error code: %errorlevel%
+    echo Failed to extract ZIP file!
     pause
 )
 
-echo Cleaning up...
+echo Cleaning up script...
 del "%~f0"
 """
             

@@ -7,3 +7,5 @@ build/
 
 
 scan.txt
+
+dist/qr_scanner/
