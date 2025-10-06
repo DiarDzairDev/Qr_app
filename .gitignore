@@ -9,3 +9,9 @@ build/
 scan.txt
 
 dist/qr_scanner/
+
+*.log
+
+__pycache__/
+
+*.pdf

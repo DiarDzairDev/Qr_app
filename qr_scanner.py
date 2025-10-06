@@ -15,6 +15,7 @@ import subprocess # Import subprocess for launching the new instance
 from dataclasses import dataclass, asdict
 import logging
 import builtins
+import re
 
 # --- Auto-Updater Dependencies ---
 import requests
@@ -23,9 +24,13 @@ import time
 import shutil
 from datetime import datetime
 
+#! REMOVE AFTER SSL FIX - Disable SSL warnings for app.diardzair.com.dz
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 # --- Configuration for Updater ---
 # 1. Define the current version of the running application
-CURRENT_VERSION = "1.0.4" 
+CURRENT_VERSION = "1.1.0" 
 # 2. Define the URL where the latest version number is stored (e.g., a raw file on GitHub)
 #    IMPORTANT: Replace this with the actual URL to a plain text file containing ONLY the latest version number (e.g., "1.0.1")
 REMOTE_VERSION_URL = "https://raw.githubusercontent.com/DiarDzairDev/Qr_app/refs/heads/main/version.txt" # Placeholder URL
@@ -109,7 +114,7 @@ class ProductData:
     Num_Chasse: str = ""
     Couleur: str = ""
     Lot: str = ""
-    Magasin: str = ""
+    Magasin: str = ""  # Will be left blank
     Relation: str = ""
 
 @dataclass
@@ -200,12 +205,13 @@ class QRScannerApp:
         self.root.config(menu=menubar)
 
         # Existing menus (File, Edit, etc. would go here)
-        
         help_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Aide", menu=help_menu)
         
         # Add the update command
         help_menu.add_command(label="Vérifier les Mises à Jour...", command=self.start_check_thread)
+        help_menu.add_separator()
+        help_menu.add_command(label="À propos...", command=self.show_about_dialog)
         
         
     def setup_ui(self):
@@ -272,15 +278,7 @@ class QRScannerApp:
         
         # Bind events (note: Text widget uses different event handling)
         self.scanner_entry.bind('<KeyRelease>', self.on_scanner_input)
-        
         scanner_frame.columnconfigure(1, weight=1)
-        
-        # Buttons
-        button_frame = ttk.Frame(scanner_frame)
-        button_frame.grid(row=1, column=0, columnspan=2, pady=(10, 0))
-        
-        ttk.Button(button_frame, text="Manual Input", 
-                  command=self.manual_input).grid(row=0, column=2, padx=5)
         
         # Status
         self.status_label = ttk.Label(scanner_frame, text="Ready to scan...", 
@@ -307,25 +305,20 @@ class QRScannerApp:
         # Filter by field
         ttk.Label(search_frame, text="Filter by:").grid(row=0, column=2, padx=(10, 5))
         self.filter_field = tk.StringVar(value="All Fields")
-        self.filter_combo = ttk.Combobox(search_frame, textvariable=self.filter_field, width=15, state="readonly")
-        self.filter_combo['values'] = ("All Fields", "Num_Chasse", "Fournisseur", "Designation", 
-                                      "Reference", "Couleur", "Lot", "Magasin")
+        self.filter_combo = ttk.Combobox(search_frame, textvariable=self.filter_field, width=15, state="readonly")        
+        self.filter_combo['values'] = ("All Fields", "Reference", "Fournisseur", "Designation", 
+                                      "Num_Chasse", "Couleur", "Lot", "Magasin")
         self.filter_combo.grid(row=0, column=3, padx=(0, 10))
         self.filter_combo.bind('<<ComboboxSelected>>', self.on_filter_change)
-        
-        # CRUD buttons
+          # CRUD buttons
         crud_frame = ttk.Frame(data_frame)
         crud_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
         
-        ttk.Button(crud_frame, text="Edit Selected", 
-                  command=self.edit_selected_record).grid(row=0, column=0, padx=(0, 5))
-        ttk.Button(crud_frame, text="Delete Selected", 
-                  command=self.delete_selected_record).grid(row=0, column=1, padx=5)
-        ttk.Button(crud_frame, text="Duplicate Selected", 
-                  command=self.duplicate_selected_record).grid(row=0, column=2, padx=5)
-        
-        # Treeview for data display (Num_Chasse first, then Reference)
-        columns = ('Num_Chasse', 'Fournisseur', 'Designation', 'Reference', 
+        # Store CRUD buttons for dynamic updating
+        self.crud_frame = crud_frame
+        self.setup_crud_buttons()
+          # Treeview for data display (Reference first, then Num_Chasse)
+        columns = ('Reference', 'Fournisseur', 'Designation', 'Num_Chasse', 
                   'Couleur', 'Lot', 'Magasin', 'Relation')
         
         self.tree = ttk.Treeview(data_frame, columns=columns, show='headings', height=10)
@@ -400,13 +393,13 @@ class QRScannerApp:
         self.update_tree_display()
     
     def setup_dynamic_ui(self):
-        """Setup UI components based on current data type"""
+        """Setup UI components based on current data type"""        
         if self.data_type == "Entrée":
-            # Update treeview columns for Entrée (Num_Chasse first, then Reference)
-            columns = ('Num_Chasse', 'Fournisseur', 'Designation', 'Reference', 
-                      'Couleur', 'Lot', 'Magasin', 'Relation')
-            filter_values = ("All Fields", "Num_Chasse", "Fournisseur", "Designation", 
-                           "Reference", "Couleur", "Lot", "Magasin")
+            # Update treeview columns for Entrée (Reference first, then Num_Chasse)
+            columns = ('Reference', 'Fournisseur', 'Designation', 'Num_Chasse', 
+                    'Couleur', 'Lot', 'Magasin', 'Relation')
+            filter_values = ("All Fields", "Reference", "Fournisseur", "Designation", 
+                        "Num_Chasse", "Couleur", "Lot", "Magasin")
         else:  # Sortie
             # Update treeview columns for Sortie
             columns = ('Date', 'Heure', 'DESIGNATION', 'N_CHASSIS', 
@@ -426,11 +419,33 @@ class QRScannerApp:
             self.tree.heading(col, text=col.replace('_', ' '), 
                             command=lambda c=col: self.sort_column(c, False))
             self.tree.column(col, width=120, minwidth=80)
-        
-        # Update filter dropdown values
+          # Update filter dropdown values
         if hasattr(self, 'filter_combo'):
             self.filter_combo['values'] = filter_values
             self.filter_field.set("All Fields")
+        
+        # Update CRUD buttons
+        if hasattr(self, 'crud_frame'):
+            self.setup_crud_buttons()
+    
+    def setup_crud_buttons(self):
+        """Setup CRUD buttons based on current data type"""
+        # Clear existing buttons
+        for widget in self.crud_frame.winfo_children():
+            widget.destroy()
+        
+        if self.data_type == "Entrée":
+            # For Entrée: Edit and Delete buttons
+            ttk.Button(self.crud_frame, text="Edit Selected", 
+                      command=self.edit_selected_record).grid(row=0, column=0, padx=(0, 5))
+            ttk.Button(self.crud_frame, text="Delete Selected", 
+                      command=self.delete_selected_record).grid(row=0, column=1, padx=5)
+        else:  # Sortie
+            # For Sortie: Change Client and Delete buttons
+            ttk.Button(self.crud_frame, text="Changer Client", 
+                      command=self.change_client_for_selected).grid(row=0, column=0, padx=(0, 5))
+            ttk.Button(self.crud_frame, text="Delete Selected", 
+                      command=self.delete_selected_record).grid(row=0, column=1, padx=5)
     
     def ignore_enter_key(self, event):
         """Ignore Enter key press to prevent accidental processing"""
@@ -467,7 +482,6 @@ class QRScannerApp:
         if current_text and not self.scanning:
             self.scanning = True
             self.process_scanned_data(None)
-    
     def process_scanned_data(self, event=None):
         """Process the scanned QR code data"""
         qr_data = self.scanner_entry.get("1.0", tk.END).strip()
@@ -480,20 +494,106 @@ class QRScannerApp:
             # Parse the QR code data
             product_data = self.parse_qr_data(qr_data)
             
-            # For Sortie type, open client selection dialog
+            # For Sortie type, fetch client info from API first
             if self.data_type == "Sortie":
-                selected_client = self.open_client_selection_dialog()
+                selected_client = None
+                
+                # Try to fetch client info from API using chassis number
+                if hasattr(product_data, 'N_CHASSIS') and product_data.N_CHASSIS:
+                    try:
+                        self.status_label.config(text="Récupération des informations client...", foreground="blue")
+                        self.root.update()  # Update UI to show status
+                        
+                        # Fetch client info from APIs
+                        api_client = self.fetch_client_info_from_chassis(product_data.N_CHASSIS)                        # Show confirmation dialog with API results
+                        confirmation_result = self.show_api_client_confirmation(api_client, product_data.N_CHASSIS)
+                        
+                        if confirmation_result == "CHANGE_CLIENT":
+                            # User chose to change client - open API client selection dialog
+                            selected_client = self.open_api_client_selection_dialog()
+                        elif confirmation_result:
+                            # User accepted API results
+                            selected_client = confirmation_result
+                            self.status_label.config(text="Informations client récupérées avec succès", foreground="green")
+                        else:
+                            # User cancelled
+                            self.status_label.config(text="Scan cancelled", foreground="orange")
+                            self.clear_scanner_input()
+                            return
+                    except Exception as e:
+                        # Check if this is the specific "not reserved" case
+                        error_msg = str(e)
+                        if error_msg == "MOTO_NOT_RESERVED":
+                            # Show specific message for non-reserved motorcycles
+                            messagebox.showwarning(
+                                "Moto Non Réservée", 
+                                f"Le châssis '{product_data.N_CHASSIS}' correspond à une moto qui n'est pas encore réservée par un client.\n\n"
+                                f"Cette moto ne peut pas être sortie car elle n'a pas été vendue."
+                            )
+                            # Clear scanner and don't proceed with client selection
+                            self.status_label.config(text="Scan annulé - Moto non réservée", foreground="red")
+                            self.clear_scanner_input()
+                            return                        
+                        else:
+                            # API failed for other reasons, show error and cancel scan
+                            messagebox.showerror(
+                                "Erreur API", 
+                                f"Impossible de récupérer les informations client automatiquement:\n{error_msg}\n\n"
+                                f"Le scan a été annulé. Veuillez réessayer plus tard."
+                            )                            
+                            self.status_label.config(text="Scan annulé - Erreur API", foreground="red")
+                            self.clear_scanner_input()
+                            return
+                            
+                else:
+                    # No chassis number, cannot proceed with Sortie
+                    messagebox.showerror(
+                        "Châssis Manquant",
+                        "Impossible de traiter cette sortie car aucun numéro de châssis n'a été détecté.\n\n"
+                        "Veuillez scanner un QR code contenant un numéro de châssis valide."
+                    )
+                    self.status_label.config(text="Scan annulé - Châssis manquant", foreground="red")
+                    self.clear_scanner_input()
+                    return
+                
+                # Update product_data with selected client info
                 if selected_client:
-                    # Update the product_data with selected client info
                     product_data.ID_CLIENT = selected_client["ID_CLIENT"]
                     product_data.NOM_PRENOM = selected_client["NOM_PRENOM"]
                     product_data.WILAYA = selected_client["WILAYA"]
-                else:
-                    # User cancelled client selection
+                else:                    # User cancelled client selection
                     self.status_label.config(text="Scan cancelled - no client selected", foreground="orange")
                     self.clear_scanner_input()
                     return
             
+            # Check for duplicates before adding
+            if self.data_type == "Entrée":
+                # Check for duplicate Reference
+                for existing_product in self.products_data:
+                    if (hasattr(existing_product, 'Reference') and 
+                        existing_product.Reference == product_data.Reference):
+                        messagebox.showwarning(
+                            "Doublon Détecté",
+                            f"Un produit avec la référence '{product_data.Reference}' existe déjà.\n"
+                            f"Les doublons ne sont pas autorisés."
+                        )
+                        self.status_label.config(text="Scan annulé - Doublon détecté", foreground="red")
+                        self.clear_scanner_input()
+                        return
+            else:  # Sortie
+                # Check for duplicate N_CHASSIS
+                for existing_product in self.products_data:
+                    if (hasattr(existing_product, 'N_CHASSIS') and 
+                        existing_product.N_CHASSIS == product_data.N_CHASSIS):
+                        messagebox.showwarning(
+                            "Doublon Détecté",
+                            f"Une sortie avec le châssis '{product_data.N_CHASSIS}' existe déjà.\n"
+                            f"Les doublons ne sont pas autorisés."
+                        )
+                        self.status_label.config(text="Scan annulé - Doublon détecté", foreground="red")
+                        self.clear_scanner_input()
+                        return
+              
             # Add to data list
             self.products_data.append(product_data)
             
@@ -503,8 +603,13 @@ class QRScannerApp:
             # Clear scanner input
             self.clear_scanner_input()
 
-            # self.status_label.config(text=f"Successfully added product: {product_data.DESIGNATION}", 
-            #                        foreground="green")
+            # Show success message based on data type
+            if self.data_type == "Sortie":
+                self.status_label.config(text=f"Sortie ajoutée: {product_data.N_CHASSIS} - {product_data.NOM_PRENOM}", 
+                                       foreground="green")
+            else:
+                self.status_label.config(text=f"Produit ajouté: {product_data.Reference}", 
+                                       foreground="green")
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to process QR data: {str(e)}")
@@ -512,11 +617,12 @@ class QRScannerApp:
         
         finally:
             self.scanning = False
-    
     def parse_qr_data(self, qr_data: str):
         """Parse QR code data with backward compatibility"""
         if self.data_type == "Entrée":
             product = ProductData()
+            # Leave Magasin empty by default
+            product.Magasin = ""
         else:  # Sortie
             from datetime import datetime
             now = datetime.now()
@@ -586,7 +692,7 @@ class QRScannerApp:
                         product.Reference = asterisk_match.group(1)
                         # Extract remaining text after the closing asterisk
                         remaining_text = qr_data[asterisk_match.end():].strip()
-                        if remaining_text:
+                        if (remaining_text):
                             # Split remaining text by common separators or patterns
                             # Look for pattern: "MOTOCYCLE CUKI -II-CUKI" or similar
                             parts = []
@@ -602,10 +708,15 @@ class QRScannerApp:
                                         product.Fournisseur = dash_parts[-1].strip()
                             else:
                                 # Simple text - use as designation
-                                product.Designation = remaining_text
-                else:
-                    # No asterisks - treat as simple reference
-                    product.Reference = qr_data.strip()
+                                product.Designation = remaining_text                
+                    else:
+                        # No asterisks - treat as simple reference
+                        product.Reference = qr_data.strip()
+                    
+        # Auto-set Fournisseur to VMS if Reference starts with VMS
+        if self.data_type == "Entrée" and hasattr(product, 'Reference') and product.Reference:
+            if product.Reference.startswith('VMS'):
+                product.Fournisseur = "VMS"
         
         else:  # Sortie type
             # For Sortie, extract chassis number and designation from QR data
@@ -754,134 +865,6 @@ CUKI I 06/2025"""
         self.scanner_entry.delete("1.0", tk.END)
         self.scanner_entry.focus_set()
         self.status_label.config(text="Ready to scan...", foreground="green")
-    
-    def manual_input(self):
-        """Allow manual input of product data via form"""
-        dialog = tk.Toplevel(self.root)
-        dialog.title(f"Manual {self.data_type} Input")
-        dialog.geometry("500x600")
-        dialog.resizable(True, True)
-        
-        # Main frame with scrollbar
-        main_frame = ttk.Frame(dialog)
-        main_frame.pack(fill='both', expand=True, padx=10, pady=10)
-        
-        # Title
-        ttk.Label(main_frame, text=f"Enter {self.data_type} Information:", 
-                 font=('Arial', 12, 'bold')).pack(pady=(0, 20))
-        
-        # Create entry fields based on data type
-        fields = {}
-        if self.data_type == "Entrée":
-            field_labels = {
-                'Reference': 'Référence:',
-                'Fournisseur': 'Fournisseur:',
-                'Designation': 'Désignation:',
-                'Num_Chasse': 'Numéro de Châsse:',
-                'Couleur': 'Couleur:',
-                'Lot': 'Lot:',
-                'Magasin': 'Magasin:',
-                'Relation': 'Relation:'
-            }
-        else:  # Sortie
-            field_labels = {
-                'Date': 'Date:',
-                'Heure': 'Heure:',
-                'DESIGNATION': 'DESIGNATION:',
-                'N_CHASSIS': 'N° CHASSIS:',
-                'ID_CLIENT': 'ID-CLIENT:',
-                'NOM_PRENOM': 'NOM & PRENOM:',
-                'WILAYA': 'WILAYA:'
-            }
-        
-        # Create form fields
-        for field, label in field_labels.items():
-            frame = ttk.Frame(main_frame)
-            frame.pack(fill='x', pady=5)
-            
-            ttk.Label(frame, text=label, width=20).pack(side='left')
-            entry = ttk.Entry(frame, width=40)
-            entry.pack(side='left', fill='x', expand=True, padx=(10, 0))
-            fields[field] = entry
-        
-        # Pre-fill with sample data based on type
-        if self.data_type == "Entrée":
-            sample_data = {
-                'Reference': 'VMSDZ06CUKI191858',
-                'Fournisseur': 'CUKI',
-                'Designation': 'MOTOCYCLE CUKI -I-',
-                'Num_Chasse': 'CUKI I 06/2025',
-                'Couleur': 'bleu nuit/ blanc',
-                'Lot': '',
-                'Magasin': 'Unité Oued-Ghir',
-                'Relation': ''
-            }
-        else:  # Sortie
-            from datetime import datetime
-            now = datetime.now()
-            sample_data = {
-                'Date': now.strftime("%d/%m/%Y"),
-                'Heure': now.strftime("%H:%M"),
-                'DESIGNATION': 'MOTOS',
-                'N_CHASSIS': '',
-                'ID_CLIENT': '',
-                'NOM_PRENOM': '',
-                'WILAYA': ''
-            }
-        
-        for field, value in sample_data.items():
-            if field in fields:  # Only insert if field exists
-                fields[field].insert(0, value)
-        
-        # Buttons frame
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(pady=20)
-        
-        def add_product():
-            # Crée l'objet selon le type
-            if self.data_type == "Entrée":
-                product = ProductData()
-                for field, entry in fields.items():
-                    setattr(product, field, entry.get().strip())
-            else:  # Sortie
-                # For Sortie type, first get basic info from form
-                product = SortieData()
-                for field, entry in fields.items():
-                    if field in ['Date', 'Heure', 'DESIGNATION', 'N_CHASSIS']:
-                        setattr(product, field, entry.get().strip())
-                
-                # Open client selection dialog for client info
-                selected_client = self.open_client_selection_dialog()
-                if selected_client:
-                    product.ID_CLIENT = selected_client["ID_CLIENT"]
-                    product.NOM_PRENOM = selected_client["NOM_PRENOM"]
-                    product.WILAYA = selected_client["WILAYA"]
-                else:
-                    # User cancelled client selection
-                    messagebox.showinfo("Annulé", "Ajout de sortie annulé - aucun client sélectionné")
-                    return
-            
-            # Ajoute à la liste
-            self.products_data.append(product)
-            self.update_tree_display()
-            # Message de succès
-            if self.data_type == "Entrée":
-                messagebox.showinfo("Succès", f"Produit ajouté: {product.Reference}")
-            else:
-                messagebox.showinfo("Succès", f"Sortie ajoutée: {product.N_CHASSIS}")
-            dialog.destroy()
-        
-        def clear_form():
-            for entry in fields.values():
-                entry.delete(0, tk.END)
-        
-        ttk.Button(button_frame, text="Ajouter Produit", 
-                  command=add_product).pack(side='left', padx=5)
-        ttk.Button(button_frame, text="Effacer Formulaire", 
-                  command=clear_form).pack(side='left', padx=5)
-        ttk.Button(button_frame, text="Annuler", 
-                  command=dialog.destroy).pack(side='left', padx=5)
-    
     def update_tree_display(self):
         """Update the treeview with current data, applying search and filter"""
         # Clear existing items
@@ -954,13 +937,13 @@ CUKI I 06/2025"""
                 filtered_products.append((i, product))
         
         # Add filtered products to tree (use filtered_products instead of all products)
-        for original_index, product in filtered_products:
+        for original_index, product in filtered_products:            
             if self.data_type == "Entrée":
                 values = (
-                    str(getattr(product, 'Num_Chasse', "") or ""),
+                    str(getattr(product, 'Reference', "") or ""),
                     str(getattr(product, 'Fournisseur', "") or ""),
                     str(getattr(product, 'Designation', "") or ""),
-                    str(getattr(product, 'Reference', "") or ""),
+                    str(getattr(product, 'Num_Chasse', "") or ""),
                     str(getattr(product, 'Couleur', "") or ""),
                     str(getattr(product, 'Lot', "") or ""),
                     str(getattr(product, 'Magasin', "") or ""),
@@ -1643,15 +1626,14 @@ CUKI I 06/2025"""
         
         item = selection[0]
         values = self.tree.item(item, 'values')
-        
-        # Confirm deletion with appropriate fields based on data type
+          # Confirm deletion with appropriate fields based on data type
         if self.data_type == "Entrée":
             confirm_message = (
                 f"Êtes-vous sûr de vouloir supprimer ce produit?\n\n"
-                f"Numéro de Châsse: {values[0]}\n"
+                f"Référence: {values[0]}\n"
                 f"Fournisseur: {values[1]}\n"
                 f"Désignation: {values[2]}\n"
-                f"Référence: {values[3]}"
+                f"Numéro de Châsse: {values[3]}"
             )
         else:  # Sortie
             confirm_message = (
@@ -1670,66 +1652,16 @@ CUKI I 06/2025"""
                 del self.products_data[index]
                 self.update_tree_display()
                 messagebox.showinfo("Succès", f"{self.data_type} supprimé avec succès")
-            else:
-                messagebox.showerror("Erreur", f"Impossible de trouver l'{self.data_type.lower()} à supprimer")
-    
-    def duplicate_selected_record(self):
-        """Duplicate the selected record"""
-        selection = self.tree.selection()
-        if not selection:
-            messagebox.showwarning("Sélection", "Veuillez sélectionner un produit à dupliquer")
-            return
-        
-        item = selection[0]
-        values = self.tree.item(item, 'values')
-        
-        # Find the index in products_data
-        index = self.find_product_index_by_values(values)
-        if index is None:
-            messagebox.showerror("Erreur", "Impossible de trouver le produit sélectionné")
-            return
-        
-        # Create a copy of the product based on data type
-        original_product = self.products_data[index]
-        
-        if self.data_type == "Entrée" and isinstance(original_product, ProductData):
-            duplicate_product = ProductData(
-                Reference=f"{original_product.Reference}_copy",
-                Fournisseur=original_product.Fournisseur,
-                Designation=original_product.Designation,
-                Num_Chasse=original_product.Num_Chasse,
-                Couleur=original_product.Couleur,
-                Lot=original_product.Lot,
-                Magasin=original_product.Magasin,
-                Relation=original_product.Relation
-            )
-        elif self.data_type == "Sortie" and isinstance(original_product, SortieData):
-            duplicate_product = SortieData(
-                Date=original_product.Date,
-                Heure=original_product.Heure,
-                DESIGNATION=original_product.DESIGNATION,
-                N_CHASSIS=f"{original_product.N_CHASSIS}_copy",
-                ID_CLIENT=original_product.ID_CLIENT,
-                NOM_PRENOM=original_product.NOM_PRENOM,
-                WILAYA=original_product.WILAYA
-            )
-        else:
-            messagebox.showerror("Erreur", "Type de données incompatible")
-            return
-        
-        # Add to products_data
-        self.products_data.append(duplicate_product)
-        self.update_tree_display()
-        messagebox.showinfo("Succès", "Enregistrement dupliqué avec succès")
+            else:                messagebox.showerror("Erreur", f"Impossible de trouver l'{self.data_type.lower()} à supprimer")
     
     def find_product_index_by_values(self, values):
-        """Find the index of a product in products_data by tree values"""
+        """Find the index of a product in products_data by tree values"""        
         for i, product in enumerate(self.products_data):
             if self.data_type == "Entrée":
-                if (getattr(product, 'Num_Chasse', '') == values[0] and 
+                if (getattr(product, 'Reference', '') == values[0] and 
                     getattr(product, 'Fournisseur', '') == values[1] and 
                     getattr(product, 'Designation', '') == values[2] and
-                    getattr(product, 'Reference', '') == values[3]):
+                    getattr(product, 'Num_Chasse', '') == values[3]):
                     return i
             else:  # Sortie
                 if (getattr(product, 'Date', '') == values[0] and 
@@ -1755,8 +1687,7 @@ CUKI I 06/2025"""
         x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
         y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
         dialog.geometry(f"+{x}+{y}")
-        
-        # Create entry fields based on data type
+          # Create entry fields based on data type
         if self.data_type == "Entrée":
             fields = [
                 ("Référence:", getattr(product, 'Reference', '')),
@@ -1767,7 +1698,8 @@ CUKI I 06/2025"""
                 ("Lot:", getattr(product, 'Lot', '')),
                 ("Magasin:", getattr(product, 'Magasin', '')),
                 ("Relation:", getattr(product, 'Relation', ''))
-            ]
+            ]            # Fields that can be edited (only Lot, Magasin, and Relation)
+            editable_fields = {"Lot:", "Magasin:", "Relation:"}
         else:  # Sortie
             fields = [
                 ("Date:", getattr(product, 'Date', '')),
@@ -1778,12 +1710,21 @@ CUKI I 06/2025"""
                 ("NOM & PRENOM:", getattr(product, 'NOM_PRENOM', '')),
                 ("WILAYA:", getattr(product, 'WILAYA', ''))
             ]
+            # For Sortie, all fields are readonly - user should use "Changer Client" button
+            editable_fields = set()  # No fields are editable
         
         entries = {}
         for i, (label, value) in enumerate(fields):
             ttk.Label(dialog, text=label).grid(row=i, column=0, sticky=tk.W, padx=10, pady=5)
             entry = ttk.Entry(dialog, width=30)
             entry.insert(0, value or "")
+            
+            # Set state based on whether field is editable
+            if label in editable_fields:
+                entry.config(state=tk.NORMAL)
+            else:
+                entry.config(state="readonly")
+            
             entry.grid(row=i, column=1, padx=10, pady=5)
             entries[label] = entry
         
@@ -2262,7 +2203,8 @@ if %errorlevel% equ 0 (
         if exist "{install_dir}\\_internal_backup" (
             rmdir /s /q "{install_dir}\\_internal_backup" >nul 2>&1
         )
-          rem Remove temporary files
+        
+        rem Remove temporary files
         del /q "{package_path}" >nul 2>&1
         rmdir /s /q "{install_dir}\\temp_update" >nul 2>&1
         
@@ -2420,7 +2362,975 @@ del "%~f0"
 
     def run(self):
         """Start the application"""
-        self.root.mainloop()
+        self.root.mainloop()    
+    def fetch_client_info_from_chassis(self, num_chassis):
+        """Fetch client information from chassis number using external APIs"""
+        try:
+            # Step 1: Get vehicle details and client_id from first API
+            print(f"Fetching vehicle details for chassis: {num_chassis}")
+            
+            vehicle_api_url = "https://diardzairstocks.store/api/lot/getDetailByNumChassis"
+            vehicle_payload = {
+                "username": "diardzair",
+                "password": "asali",
+                "num": num_chassis
+            }
+            
+            # Make first API call
+            vehicle_response = requests.post(vehicle_api_url, json=vehicle_payload, timeout=10)
+            vehicle_response.raise_for_status()
+            
+            vehicle_data = vehicle_response.json()
+            print(f"Vehicle API response status: {vehicle_data.get('status', 'unknown')}")
+            
+            if vehicle_data.get('status') != 200:
+                # Check if it's a "not found" or "not reserved" case
+                if vehicle_data.get('status') == 404 or 'not found' in str(vehicle_data).lower():
+                    raise Exception("MOTO_NOT_RESERVED")
+                else:
+                    raise Exception(f"Vehicle API returned status: {vehicle_data.get('status', 'unknown')}")
+            
+            # Extract client_id from vehicle data
+            vehicule_info = vehicle_data.get('vehicule', {})
+            client_id = vehicule_info.get('client_id')
+            
+            if not client_id:
+                # No client_id means the moto is not reserved
+                raise Exception("MOTO_NOT_RESERVED")
+                
+            print(f"Found client_id: {client_id}")
+            
+            # Step 2: Get client details from second API
+            client_api_url = f"https://albaraka.fun/api/orders/info/{client_id}"
+            headers = {
+                "Authorization": "Bearer U3wXgPLvreiyv5JRJsxVU4Tlbyakt7MLFzTjWq8DaPjLbGXgbMELK5xsMRqvHcOtc0H2obwVK4OGqJbfsgIo2hgakbxi5Sk4mWRKv1IOYr42qtOiDiyd3f8fexCLe9m"
+            }
+            
+            # Make second API call
+            client_response = requests.get(client_api_url, headers=headers, timeout=10)
+            client_response.raise_for_status()
+            
+            client_data = client_response.json()
+            print(f"Client API response error: {client_data.get('error', 'unknown')}")
+            
+            if client_data.get('error', True):
+                raise Exception("Client API returned error - client information not found")
+            
+            # Extract client information
+            client_info = client_data.get('data', {})
+            nom = client_info.get('nom', '')
+            prenom = client_info.get('prenom', '')
+            wilaya = client_info.get('wilaya', '')
+            
+            # Create full name
+            nom_prenom = f"{nom} {prenom}".strip()
+            
+            # Create client object compatible with existing system
+            api_client = {
+                "ID_CLIENT": str(client_id),
+                "NOM_PRENOM": nom_prenom,
+                "WILAYA": wilaya
+            }
+            
+            print(f"Successfully fetched client info: {nom_prenom} from {wilaya}")
+            return api_client
+            
+        except requests.exceptions.RequestException as e:
+            print(f"Network error during API call: {e}")
+            raise Exception(f"Erreur réseau: {str(e)}")
+        except Exception as e:
+            print(f"Error fetching client info: {e}")
+            # Check if this is the specific "not reserved" case
+            if str(e) == "MOTO_NOT_RESERVED":
+                raise Exception("MOTO_NOT_RESERVED")
+            else:
+                raise Exception(f"Erreur lors de la récupération des informations client: {str(e)}")
+
+    def show_api_client_confirmation(self, api_client, num_chassis):
+        """Show confirmation dialog with API-fetched client info and option to use or choose manually"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Informations Client Trouvées")
+        dialog.geometry("800x500")
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Center the dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
+        
+        selected_client = None
+        
+        # Main frame
+        main_frame = ttk.Frame(dialog, padding="20")
+        main_frame.pack(fill='both', expand=True)
+        
+        # Title
+        ttk.Label(main_frame, text="Informations Client Récupérées", 
+                 font=('Arial', 14, 'bold')).pack(pady=(0, 20))
+        
+        # Client info frame
+        info_frame = ttk.LabelFrame(main_frame, text="Détails du Client", padding="15")
+        info_frame.pack(fill='x', pady=(0, 20))
+        
+        # Display client information
+        client_info = [
+            ("N° Châssis:", num_chassis),
+            ("ID Client:", api_client["ID_CLIENT"]),
+            ("Nom & Prénom:", api_client["NOM_PRENOM"]),
+            ("Wilaya:", api_client["WILAYA"])
+        ]
+        
+        for i, (label_text, value) in enumerate(client_info):
+            info_row = ttk.Frame(info_frame)
+            info_row.pack(fill='x', pady=5)
+            
+            ttk.Label(info_row, text=label_text, font=('Arial', 10, 'bold'), width=15).pack(side='left')
+            ttk.Label(info_row, text=value, font=('Arial', 10)).pack(side='left', padx=(10, 0))
+          # Message
+        message_label = ttk.Label(main_frame, 
+                                text="Voulez-vous utiliser ces informations client ?",
+                                font=('Arial', 10))
+        message_label.pack(pady=(0, 20))
+          # Buttons frame
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(pady=10)
+        def use_api_client():
+            nonlocal selected_client
+            selected_client = api_client
+            dialog.destroy()
+        
+        def change_client():
+            nonlocal selected_client
+            selected_client = "CHANGE_CLIENT"
+            dialog.destroy()
+        
+        def cancel_operation():
+            nonlocal selected_client
+            selected_client = None
+            dialog.destroy()
+        
+        ttk.Button(button_frame, text="Utiliser ces Informations", 
+                  command=use_api_client).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Changer Client", 
+                  command=change_client).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Annuler", 
+                  command=cancel_operation).pack(side=tk.LEFT, padx=5)
+        
+        # Wait for dialog to close
+        dialog.wait_window()
+        return selected_client
+    
+    def fetch_clients_from_api_with_pagination(self, client_id="", nom="", prenom="", page=1, per_page=200):
+        """Fetch clients from the API with search parameters and pagination info"""
+        try:
+            api_url = "https://app.diardzair.com.dz/api/commandes"
+            
+            # Build parameters
+            params = {
+                "page": page,
+                "perPage": per_page
+            }
+            headers={
+                "Authorization": "Bearer f8peRksDOtpBRE6UAoJhC6kP3gPg5JOUJVsi9fhsJCn8sBgjE6C/2rUo3PEYCmYG"
+            }
+            # Add search parameters if provided
+            if client_id:
+                params["id"] = client_id
+            if nom:
+                params["nom"] = nom
+            if prenom:
+                params["prenom"] = prenom
+            
+            print(f"Fetching clients from API with params: {params}")
+            
+            # Make API call
+            #! REMOVE AFTER SSL FIX - Disable SSL verification for app.diardzair.com.dz
+            response = requests.get(api_url, params=params,headers=headers, timeout=10, verify=False)
+            response.raise_for_status()
+            
+            data = response.json()
+            print(f"API response: {data}")
+            
+            if data.get('error', True):
+                raise Exception("API returned error")
+            
+            clients = data.get('data', [])
+            total_clients = data.get('TotalCommandes', 0)
+            current_page = data.get('Page', page)
+            total_pages = data.get('TotalPage', 1)
+            
+            return {
+                'clients': clients,
+                'total_clients': total_clients,
+                'current_page': current_page,
+                'total_pages': total_pages
+            }
+            
+        except requests.exceptions.RequestException as e:
+            print(f"Network error during client search: {e}")
+            raise Exception(f"Erreur réseau: {str(e)}")
+        except Exception as e:
+            print(f"Error fetching clients: {e}")
+            raise Exception(f"Erreur lors de la récupération des clients: {str(e)}")
+    
+    def fetch_client_details_from_api(self, client_id):
+        """Fetch detailed client information including wilaya from the API"""
+        try:
+            client_api_url = f"https://albaraka.fun/api/orders/info/{client_id}"
+            headers = {
+                "Authorization": "Bearer U3wXgPLvreiyv5JRJsxVU4Tlbyakt7MLFzTjWq8DaPjLbGXgbMELK5xsMRqvHcOtc0H2obwVK4OGqJbfsgIo2hgakbxi5Sk4mWRKv1IOYr42qtOiDiyd3f8fexCLe9m"
+            }
+            
+            print(f"Fetching client details for ID: {client_id}")
+            
+            # Make API call
+            response = requests.get(client_api_url, headers=headers, timeout=10)
+            response.raise_for_status()
+            
+            data = response.json()
+            print(f"Client details API response: {data}")
+            
+            if data.get('error', True):
+                raise Exception("Client details API returned error")
+            
+            # Extract client information
+            client_info = data.get('data', {})
+            
+            return {
+                'wilaya': client_info.get('wilaya', 'Alger'),
+                'nom': client_info.get('nom', ''),
+                'prenom': client_info.get('prenom', ''),
+                'mobile': client_info.get('mobile', ''),
+                'email': client_info.get('email', '')
+            }
+            
+        except requests.exceptions.RequestException as e:
+            print(f"Network error during client details fetch: {e}")
+            raise Exception(f"Erreur réseau: {str(e)}")
+        except Exception as e:
+            print(f"Error fetching client details: {e}")
+            raise Exception(f"Erreur lors de la récupération des détails du client: {str(e)}")
+
+    def fetch_clients_from_api(self, client_id="", nom="", prenom="", page=1, per_page=50):
+        """Fetch clients from the API with search parameters"""
+        try:
+            api_url = "https://app.diardzair.com.dz/api/commandes/"
+            
+            # Build parameters
+            params = {
+                "page": page,
+                "perPage": per_page
+            }
+              # Add search parameters if provided
+            if client_id:
+                params["id"] = client_id
+            if nom:
+                params["nom"] = nom
+            if prenom:
+                params["prenom"] = prenom
+            
+            print(f"Fetching clients from API with params: {params}")
+            headers={
+                "Authorization": "Bearer f8peRksDOtpBRE6UAoJhC6kP3gPg5JOUJVsi9fhsJCn8sBgjE6C/2rUo3PEYCmYG"
+            }
+            # Make API call
+            #! REMOVE AFTER SSL FIX - Disable SSL verification for app.diardzair.com.dz
+            response = requests.get(api_url, params=params,headers=headers, timeout=10, verify=False)
+            response.raise_for_status()
+            
+            data = response.json()
+            print(f"API response: {data}")
+            
+            if data.get('error', True):
+                raise Exception("API returned error")
+            
+            clients = data.get('data', [])
+            return clients
+            
+        except requests.exceptions.RequestException as e:
+            print(f"Network error during client search: {e}")
+            raise Exception(f"Erreur réseau: {str(e)}")
+        except Exception as e:
+            print(f"Error fetching clients: {e}")
+            raise Exception(f"Erreur lors de la récupération des clients: {str(e)}")
+    def get_client_wilaya_manual(self, client_id):
+        """Get wilaya for a client manually - fallback when API fails"""
+        # For now, we'll show a simple dialog to select wilaya
+        # In a real implementation, you might want to fetch this from another API
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Sélectionner la Wilaya")
+        dialog.geometry("300x150")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Center the dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
+        
+        selected_wilaya = None
+        
+        # Main frame
+        main_frame = ttk.Frame(dialog, padding="20")
+        main_frame.pack(fill='both', expand=True)
+        
+        ttk.Label(main_frame, text="Sélectionnez la wilaya du client:", 
+                 font=('Arial', 10)).pack(pady=(0, 10))
+        
+        wilaya_var = tk.StringVar()
+        wilaya_combo = ttk.Combobox(main_frame, textvariable=wilaya_var, 
+                                   values=self.wilayas, state="readonly", width=25)
+        wilaya_combo.pack(pady=(0, 20))
+        wilaya_combo.set("Alger")  # Default value
+        
+        def confirm_wilaya():
+            nonlocal selected_wilaya
+            selected_wilaya = wilaya_var.get()
+            dialog.destroy()
+        
+        def cancel_wilaya():
+            nonlocal selected_wilaya
+            selected_wilaya = "Alger"  # Default fallback
+            dialog.destroy()
+        
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack()
+        
+        ttk.Button(button_frame, text="Confirmer", 
+                  command=confirm_wilaya).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Annuler", 
+                  command=cancel_wilaya).pack(side=tk.LEFT, padx=5)
+        
+        # Wait for dialog to close
+        dialog.wait_window()
+        
+        return selected_wilaya or "Alger"
+        
+    def open_api_client_selection_dialog(self):
+            """Open dialog to search and select a client using API"""
+            dialog = tk.Toplevel(self.root)
+            dialog.title("Rechercher et Sélectionner un Client")
+            dialog.geometry("900x700")
+            dialog.resizable(True, True)
+            dialog.transient(self.root)
+            dialog.grab_set()
+            
+            # Center the dialog
+            dialog.update_idletasks()
+            x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+            y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+            dialog.geometry(f"+{x}+{y}")
+            
+            selected_client = None
+            current_page = 1
+            total_pages = 1
+            clients_per_page = 200
+            
+            # Main frame
+            main_frame = ttk.Frame(dialog, padding="10")
+            main_frame.pack(fill='both', expand=True)
+            
+            # Title
+            ttk.Label(main_frame, text="Rechercher un Client dans la Base de Données", 
+                    font=('Arial', 14, 'bold')).pack(pady=(0, 20))
+            
+            # Search frame
+            search_frame = ttk.LabelFrame(main_frame, text="Critères de Recherche", padding="10")
+            search_frame.pack(fill='x', pady=(0, 10))
+            
+            # Search fields
+            ttk.Label(search_frame, text="ID Client:").grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
+            search_id_var = tk.StringVar()
+            search_id_entry = ttk.Entry(search_frame, textvariable=search_id_var, width=15)
+            search_id_entry.grid(row=0, column=1, padx=(0, 20), sticky=(tk.W, tk.E))
+            
+            ttk.Label(search_frame, text="Nom:").grid(row=0, column=2, sticky=tk.W, padx=(0, 5))
+            search_nom_var = tk.StringVar()
+            search_nom_entry = ttk.Entry(search_frame, textvariable=search_nom_var, width=20)
+            search_nom_entry.grid(row=0, column=3, padx=(0, 20), sticky=(tk.W, tk.E))
+            
+            ttk.Label(search_frame, text="Prénom:").grid(row=0, column=4, sticky=tk.W, padx=(0, 5))
+            search_prenom_var = tk.StringVar()
+            search_prenom_entry = ttk.Entry(search_frame, textvariable=search_prenom_var, width=20)
+            search_prenom_entry.grid(row=0, column=5, padx=(0, 10), sticky=(tk.W, tk.E))
+            
+            # Search and Clear buttons
+            button_row = ttk.Frame(search_frame)
+            button_row.grid(row=1, column=0, columnspan=6, pady=(10, 0), sticky=(tk.W, tk.E))
+            
+            search_button = ttk.Button(button_row, text="Rechercher", command=lambda: search_clients())
+            search_button.pack(side=tk.LEFT, padx=(0, 10))
+            
+            clear_button = ttk.Button(button_row, text="Effacer", command=lambda: clear_search())
+            clear_button.pack(side=tk.LEFT)
+            
+            search_frame.columnconfigure(1, weight=1)
+            search_frame.columnconfigure(3, weight=1)
+            search_frame.columnconfigure(5, weight=1)
+            
+            # Results frame
+            results_frame = ttk.LabelFrame(main_frame, text="Résultats de Recherche", padding="10")
+            results_frame.pack(fill='both', expand=True, pady=(0, 10))
+            
+            # Treeview for results
+            result_columns = ('ID', 'Nom', 'Prénom', 'Mobile', 'Email')
+            result_tree = ttk.Treeview(results_frame, columns=result_columns, show='headings', height=15)
+            
+            # Configure column headings
+            for col in result_columns:
+                result_tree.heading(col, text=col)
+                if col == 'ID':
+                    result_tree.column(col, width=80, minwidth=60)
+                elif col == 'Mobile':
+                    result_tree.column(col, width=120, minwidth=100)
+                elif col == 'Email':
+                    result_tree.column(col, width=200, minwidth=150)
+                else:
+                    result_tree.column(col, width=150, minwidth=100)
+            
+            # Scrollbars for result tree
+            v_scrollbar = ttk.Scrollbar(results_frame, orient="vertical", command=result_tree.yview)
+            h_scrollbar = ttk.Scrollbar(results_frame, orient="horizontal", command=result_tree.xview)
+            result_tree.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+            
+            # Grid layout for result tree
+            result_tree.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+            v_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+            h_scrollbar.grid(row=1, column=0, sticky=(tk.W, tk.E))
+            
+            results_frame.columnconfigure(0, weight=1)
+            results_frame.rowconfigure(0, weight=1)
+            
+            # Pagination frame
+            pagination_frame = ttk.Frame(results_frame)
+            pagination_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(10, 0))
+            
+            # Pagination controls
+            prev_button = ttk.Button(pagination_frame, text="◄ Précédent", command=lambda: change_page(-1))
+            prev_button.pack(side=tk.LEFT)
+            
+            page_label = ttk.Label(pagination_frame, text="Page 1 sur 1")
+            page_label.pack(side=tk.LEFT, padx=20)
+            
+            next_button = ttk.Button(pagination_frame, text="Suivant ►", command=lambda: change_page(1))
+            next_button.pack(side=tk.LEFT)
+            
+            # Status label
+            status_label = ttk.Label(results_frame, text="Chargement des clients...", 
+                                    foreground="blue")
+            status_label.grid(row=3, column=0, columnspan=2, pady=10)
+              # Variables to store current search criteria
+            current_search_id = ""
+            current_search_nom = ""
+            current_search_prenom = ""
+            
+            # Function to change page
+            def change_page(direction):
+                nonlocal current_page
+                new_page = current_page + direction
+                if 1 <= new_page <= total_pages:
+                    current_page = new_page
+                    # Use stored search criteria for pagination
+                    load_clients(current_page, current_search_id, current_search_nom, current_search_prenom)
+            
+            # Function to update pagination controls
+            def update_pagination():
+                page_label.config(text=f"Page {current_page} sur {total_pages}")
+                prev_button.config(state=tk.NORMAL if current_page > 1 else tk.DISABLED)
+                next_button.config(state=tk.NORMAL if current_page < total_pages else tk.DISABLED)
+            
+            # Function to load clients (with or without filters)
+            def load_clients(page=1, client_id="", nom="", prenom=""):
+                nonlocal current_page, total_pages
+                
+                # Clear existing results
+                for item in result_tree.get_children():
+                    result_tree.delete(item)
+                
+                status_label.config(text="Chargement en cours...", foreground="blue")
+                dialog.update()
+                
+                try:
+                    # Call API to get clients
+                    result = self.fetch_clients_from_api_with_pagination(client_id, nom, prenom, page, clients_per_page)
+                    clients = result['clients']
+                    total_pages = result['total_pages']
+                    current_page = page
+                    
+                    if clients:
+                        # Populate results
+                        for client in clients:
+                            result_tree.insert('', 'end', values=(
+                                client["id"],
+                                client["nom"],
+                                client["prenom"],
+                                client.get("mobile", ""),
+                                client.get("email", "")
+                            ), tags=(str(client["id"]),))
+                        
+                        status_label.config(text=f"{len(clients)} client(s) affiché(s) - Total: {result['total_clients']}", foreground="green")
+                    else:
+                        status_label.config(text="Aucun client trouvé", foreground="orange")
+                    
+                    update_pagination()
+                        
+                except Exception as e:
+                    status_label.config(text=f"Erreur lors du chargement: {str(e)}", foreground="red")
+                    messagebox.showerror("Erreur API", f"Erreur lors du chargement des clients:\n{str(e)}")
+              # Function to search clients via API
+            def search_clients():
+                nonlocal current_search_id, current_search_nom, current_search_prenom
+                
+                # Update stored search criteria
+                current_search_id = search_id_var.get().strip()
+                current_search_nom = search_nom_var.get().strip()
+                current_search_prenom = search_prenom_var.get().strip()
+                
+                # Load with filters
+                load_clients(1, current_search_id, current_search_nom, current_search_prenom)
+            
+            # Function to clear search and reload all clients
+            def clear_search():
+                nonlocal current_search_id, current_search_nom, current_search_prenom
+                
+                # Clear variables
+                search_id_var.set("")
+                search_nom_var.set("")
+                search_prenom_var.set("")
+                
+                # Clear stored search criteria
+                current_search_id = ""
+                current_search_nom = ""
+                current_search_prenom = ""
+                
+                load_clients(1)  # Load all clients from page 1
+            
+            # Button frame
+            button_frame = ttk.Frame(main_frame)
+            button_frame.pack(pady=20)
+            
+            def select_client():
+                nonlocal selected_client
+                selection = result_tree.selection()
+                if not selection:
+                    messagebox.showwarning("Sélection", "Veuillez sélectionner un client dans la liste")
+                    return
+                
+                item = selection[0]
+                values = result_tree.item(item, 'values')
+                tags = result_tree.item(item, 'tags')
+                
+                if values and tags:
+                    client_id = tags[0]
+                    
+                    # Show loading message
+                    status_label.config(text="Récupération des informations détaillées...", foreground="blue")
+                    dialog.update()
+                    
+                    try:
+                        # Fetch detailed client info including wilaya from the API
+                        client_details = self.fetch_client_details_from_api(client_id)
+                        
+                        selected_client = {
+                            "ID_CLIENT": str(values[0]),
+                            "NOM_PRENOM": f"{values[1]} {values[2]}".strip(),
+                            "WILAYA": client_details.get("wilaya", "Alger")  # Default to Alger if not found
+                        }
+                        
+                        status_label.config(text="Client sélectionné avec succès", foreground="green")
+                        dialog.destroy()
+                        
+                    except Exception as e:
+                        # If API fails, ask user to select wilaya manually as fallback
+                        status_label.config(text="Erreur lors de la récupération de la wilaya", foreground="orange")
+                        messagebox.showwarning(
+                            "Erreur API", 
+                            f"Impossible de récupérer la wilaya automatiquement: {str(e)}\n\n"
+                            f"Veuillez sélectionner la wilaya manuellement."
+                        )
+                        wilaya = self.get_client_wilaya_manual(client_id)
+                        
+                        selected_client = {
+                            "ID_CLIENT": str(values[0]),
+                            "NOM_PRENOM": f"{values[1]} {values[2]}".strip(),
+                            "WILAYA": wilaya
+                        }
+                        dialog.destroy()
+            
+            def cancel_selection():
+                nonlocal selected_client
+                selected_client = None
+                dialog.destroy()
+            
+            ttk.Button(button_frame, text="Sélectionner Client", 
+                    command=select_client).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Annuler", 
+                    command=cancel_selection).pack(side=tk.LEFT, padx=5)
+            
+            # Double-click to select
+            def on_double_click(event):
+                select_client()
+            
+            result_tree.bind('<Double-1>', on_double_click)
+            
+            # Bind Enter key to search
+            def on_enter(event):
+                search_clients()
+            
+            search_id_entry.bind('<Return>', on_enter)
+            search_nom_entry.bind('<Return>', on_enter)
+            search_prenom_entry.bind('<Return>', on_enter)
+            
+            # Focus on first search field
+            search_id_entry.focus_set()
+            
+            # Load initial data (all clients from page 1)
+            dialog.after(100, lambda: load_clients(1))
+            
+            # Wait for dialog to close
+            dialog.wait_window()
+            
+            return selected_client
+
+    def fetch_clients_from_api_with_pagination(self, client_id="", nom="", prenom="", page=1, per_page=200):
+            """Fetch clients from the API with search parameters and pagination info"""
+            try:
+                api_url = "https://app.diardzair.com.dz/api/commandes"
+                
+                # Build parameters
+                params = {
+                    "page": page,
+                    "perPage": per_page
+                }
+                headers={
+                    "Authorization": "Bearer f8peRksDOtpBRE6UAoJhC6kP3gPg5JOUJVsi9fhsJCn8sBgjE6C/2rUo3PEYCmYG"
+                }
+                # Add search parameters if provided
+                if client_id:
+                    params["id"] = client_id
+                if nom:
+                    params["nom"] = nom
+                if prenom:
+                    params["prenom"] = prenom
+                
+                print(f"Fetching clients from API with params: {params}")
+                
+                # Make API call
+                #! REMOVE AFTER SSL FIX - Disable SSL verification for app.diardzair.com.dz
+                response = requests.get(api_url, params=params, headers=headers, timeout=10, verify=False)
+                response.raise_for_status()
+                
+                data = response.json()
+                print(f"API response: {data}")
+                
+                if data.get('error', True):
+                    raise Exception("API returned error")
+                
+                clients = data.get('data', [])
+                total_clients = data.get('TotalCommandes', 0)
+                current_page = data.get('Page', page)
+                total_pages = data.get('TotalPage', 1)
+                
+                return {
+                    'clients': clients,
+                    'total_clients': total_clients,
+                    'current_page': current_page,
+                    'total_pages': total_pages
+                }
+                
+            except requests.exceptions.RequestException as e:
+                print(f"Network error during client search: {e}")
+                raise Exception(f"Erreur réseau: {str(e)}")
+            except Exception as e:
+                print(f"Error fetching clients: {e}")
+                raise Exception(f"Erreur lors de la récupération des clients: {str(e)}")
+        
+    def fetch_client_details_from_api(self, client_id):
+            """Fetch detailed client information including wilaya from the API"""
+            try:
+                client_api_url = f"https://albaraka.fun/api/orders/info/{client_id}"
+                headers = {
+                    "Authorization": "Bearer U3wXgPLvreiyv5JRJsxVU4Tlbyakt7MLFzTjWq8DaPjLbGXgbMELK5xsMRqvHcOtc0H2obwVK4OGqJbfsgIo2hgakbxi5Sk4mWRKv1IOYr42qtOiDiyd3f8fexCLe9m"
+                }
+                
+                print(f"Fetching client details for ID: {client_id}")
+                
+                # Make API call
+                response = requests.get(client_api_url, headers=headers, timeout=10)
+                response.raise_for_status()
+                
+                data = response.json()
+                print(f"Client details API response: {data}")
+                
+                if data.get('error', True):
+                    raise Exception("Client details API returned error")
+                
+                # Extract client information
+                client_info = data.get('data', {})
+                
+                return {
+                    'wilaya': client_info.get('wilaya', 'Alger'),
+                    'nom': client_info.get('nom', ''),
+                    'prenom': client_info.get('prenom', ''),
+                    'mobile': client_info.get('mobile', ''),
+                    'email': client_info.get('email', '')
+                }
+                
+            except requests.exceptions.RequestException as e:
+                print(f"Network error during client details fetch: {e}")
+                raise Exception(f"Erreur réseau: {str(e)}")
+            except Exception as e:
+                print(f"Error fetching client details: {e}")
+                raise Exception(f"Erreur lors de la récupération des détails du client: {str(e)}")
+
+    def fetch_clients_from_api(self, client_id="", nom="", prenom="", page=1, per_page=50):
+            """Fetch clients from the API with search parameters"""
+            try:
+                api_url = "https://app.diardzair.com.dz/api/commandes"
+                
+                # Build parameters
+                params = {
+                    "page": page,
+                    "perPage": per_page
+                }
+                
+                # Add search parameters if provided
+                if client_id:
+                    params["id"] = client_id
+                if nom:
+                    params["nom"] = nom
+                if prenom:
+                    params["prenom"] = prenom
+                    
+                headers={
+                    "Authorization": "Bearer f8peRksDOtpBRE6UAoJhC6kP3gPg5JOUJVsi9fhsJCn8sBgjE6C/2rUo3PEYCmYG"
+                }
+                
+                print(f"Fetching clients from API with params: {params}")
+                
+                # Make API call
+                #! REMOVE AFTER SSL FIX - Disable SSL verification for app.diardzair.com.dz
+                response = requests.get(api_url, params=params, headers=headers, timeout=10, verify=False)
+                response.raise_for_status()
+                
+                data = response.json()
+                print(f"API response: {data}")
+                
+                if data.get('error', True):
+                    raise Exception("API returned error")
+                
+                clients = data.get('data', [])
+                return clients
+                
+            except requests.exceptions.RequestException as e:
+                print(f"Network error during client search: {e}")
+                raise Exception(f"Erreur réseau: {str(e)}")
+            except Exception as e:
+                print(f"Error fetching clients: {e}")
+                raise Exception(f"Erreur lors de la récupération des clients: {str(e)}")
+    
+    def get_client_wilaya_manual(self, client_id):
+            """Get wilaya for a client manually - fallback when API fails"""
+            # For now, we'll show a simple dialog to select wilaya
+            # In a real implementation, you might want to fetch this from another API
+            dialog = tk.Toplevel(self.root)
+            dialog.title("Sélectionner la Wilaya")
+            dialog.geometry("300x150")
+            dialog.transient(self.root)
+            dialog.grab_set()
+            
+            # Center the dialog
+            dialog.update_idletasks()
+            x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+            y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+            dialog.geometry(f"+{x}+{y}")
+            
+            selected_wilaya = None
+            
+            # Main frame
+            main_frame = ttk.Frame(dialog, padding="20")
+            main_frame.pack(fill='both', expand=True)
+            
+            ttk.Label(main_frame, text="Sélectionnez la wilaya du client:", 
+                    font=('Arial', 10)).pack(pady=(0, 10))
+            
+            wilaya_var = tk.StringVar()
+            wilaya_combo = ttk.Combobox(main_frame, textvariable=wilaya_var, 
+                                    values=self.wilayas, state="readonly", width=25)
+            wilaya_combo.pack(pady=(0, 20))
+            wilaya_combo.set("Alger")  # Default value
+            
+            def confirm_wilaya():
+                nonlocal selected_wilaya
+                selected_wilaya = wilaya_var.get()
+                dialog.destroy()
+            
+            def cancel_wilaya():
+                nonlocal selected_wilaya
+                selected_wilaya = "Alger"  # Default fallback
+                dialog.destroy()
+            
+            button_frame = ttk.Frame(main_frame)
+            button_frame.pack()
+            
+            ttk.Button(button_frame, text="Confirmer", 
+                    command=confirm_wilaya).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Annuler", 
+                    command=cancel_wilaya).pack(side=tk.LEFT, padx=5)
+            
+            # Wait for dialog to close
+            dialog.wait_window()
+            
+            return selected_wilaya or "Alger"
+
+    def change_client_for_selected(self):
+        """Change client for selected Sortie record"""
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showwarning("Sélection", "Veuillez sélectionner une sortie pour changer le client")
+            return
+        
+        item = selection[0]
+        values = self.tree.item(item, 'values')
+        
+        # Find the index in products_data
+        index = self.find_product_index_by_values(values)
+        if index is None:
+            messagebox.showerror("Erreur", "Impossible de trouver la sortie sélectionnée")
+            return
+        
+        # Open API client selection dialog
+        selected_client = self.open_api_client_selection_dialog()
+        
+        if selected_client:
+            # Update the sortie record with new client info
+            sortie_record = self.products_data[index]
+            sortie_record.ID_CLIENT = selected_client["ID_CLIENT"]
+            sortie_record.NOM_PRENOM = selected_client["NOM_PRENOM"]
+            sortie_record.WILAYA = selected_client["WILAYA"]
+              # Update the display
+            self.update_tree_display()
+            messagebox.showinfo("Succès", "Client modifié avec succès")
+    
+    def show_about_dialog(self):
+        """Show About dialog with application information"""
+        try:
+            # Create About dialog
+            about_dialog = tk.Toplevel(self.root)
+            about_dialog.title("À propos de QR Scanner")
+            about_dialog.geometry("450x500")
+            about_dialog.resizable(False, False)
+            about_dialog.transient(self.root)
+            about_dialog.grab_set()
+            
+            # Center the dialog
+            about_dialog.update_idletasks()
+            x = (about_dialog.winfo_screenwidth() // 2) - (about_dialog.winfo_width() // 2)
+            y = (about_dialog.winfo_screenheight() // 2) - (about_dialog.winfo_height() // 2)
+            about_dialog.geometry(f"+{x}+{y}")
+            
+            # Main frame with padding
+            main_frame = ttk.Frame(about_dialog, padding="20")
+            main_frame.pack(fill='both', expand=True)
+            
+            # Try to load and display logo
+            try:
+                from PIL import Image, ImageTk
+                import os
+                
+                logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo_diardzair.jpg")
+                if os.path.exists(logo_path):
+                    # Load and resize logo
+                    img = Image.open(logo_path)
+                    img = img.resize((120, 120), Image.Resampling.LANCZOS)
+                    logo_photo = ImageTk.PhotoImage(img)
+                    
+                    # Display logo
+                    logo_label = ttk.Label(main_frame, image=logo_photo)
+                    logo_label.image = logo_photo  # Keep a reference
+                    logo_label.pack(pady=(0, 20))
+            except Exception as e:
+                print(f"Could not load logo: {e}")
+                # If logo fails to load, show a placeholder
+                ttk.Label(main_frame, text="📷", font=('Arial', 48)).pack(pady=(0, 20))
+            
+            # Application name
+            ttk.Label(main_frame, text="QR Scanner", 
+                     font=('Arial', 20, 'bold'), 
+                     foreground='#2c3e50').pack(pady=(0, 10))
+            
+            # Version
+            ttk.Label(main_frame, text=f"Version {CURRENT_VERSION}", 
+                     font=('Arial', 12), 
+                     foreground='#7f8c8d').pack(pady=(0, 20))
+            
+            # Description
+            description_text = (
+                "Application de scan et génération de codes QR\n"
+                "pour la gestion des entrées et sorties de stock"
+            )
+            ttk.Label(main_frame, text=description_text, 
+                     font=('Arial', 11), 
+                     foreground='#34495e',
+                     justify=tk.CENTER).pack(pady=(0, 20))
+            
+            # Developer info
+            dev_frame = ttk.LabelFrame(main_frame, text="Développé par", padding="15")
+            dev_frame.pack(fill='x', pady=(0, 20))
+            
+            ttk.Label(dev_frame, text="DairDzair E-Commerce & INNOVATION", 
+                     font=('Arial', 12, 'bold'), 
+                     foreground='#2980b9').pack()
+            
+            ttk.Label(dev_frame, text="Solutions innovantes pour le commerce électronique", 
+                     font=('Arial', 10), 
+                     foreground='#7f8c8d',
+                     justify=tk.CENTER).pack(pady=(5, 0))
+            
+            # Features
+            features_frame = ttk.LabelFrame(main_frame, text="Fonctionnalités", padding="15")
+            features_frame.pack(fill='x', pady=(0, 20))
+            
+            features_text = (
+                "• Scan automatique de codes QR\n"
+                "• Gestion des entrées et sorties\n"
+                "• Intégration API pour les clients\n"
+                "• Export Excel automatique\n"
+                "• Mises à jour automatiques\n"
+                "• Interface intuitive et moderne"
+            )
+            ttk.Label(features_frame, text=features_text, 
+                     font=('Arial', 10), 
+                     foreground='#2c3e50',
+                     justify=tk.LEFT).pack(anchor='w')
+            
+            # Copyright and close button
+            ttk.Label(main_frame, text=f"© 2024-2025 DairDzair E-Commerce & INNOVATION", 
+                     font=('Arial', 9), 
+                     foreground='#95a5a6').pack(pady=(10, 0))
+            
+            # Close button
+            ttk.Button(main_frame, text="Fermer", 
+                      command=about_dialog.destroy).pack(pady=(20, 0))
+            
+            # Set focus on close button
+            about_dialog.focus_set()
+            
+        except Exception as e:
+            # Fallback simple about dialog if there's any error
+            messagebox.showinfo(
+                "À propos de QR Scanner",
+                f"QR Scanner v{CURRENT_VERSION}\n\n"
+                f"Application de scan et génération de codes QR\n"
+                f"pour la gestion des entrées et sorties de stock\n\n"
+                f"Développé par :\n"
+                f"DairDzair E-Commerce & INNOVATION\n\n"
+                f"© 2024-2025 DairDzair E-Commerce & INNOVATION"
+            )
 
 def main():
     """Main function to run the application"""
@@ -2429,3 +3339,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
