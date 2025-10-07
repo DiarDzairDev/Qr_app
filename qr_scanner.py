@@ -128,6 +128,17 @@ class SortieData:
     NOM_PRENOM: str = ""
     WILAYA: str = ""
 
+@dataclass
+class RetourData:
+    """Data structure for retour information - Retour type"""
+    Date: str = ""
+    Heure: str = ""
+    DESIGNATION: str = "MOTOS"
+    N_CHASSIS: str = ""
+    ID_CLIENT: str = ""
+    NOM_PRENOM: str = ""
+    WILAYA: str = ""
+
 class QRScannerApp:
     def __init__(self):
         self.root = tk.Tk()
@@ -147,11 +158,17 @@ class QRScannerApp:
         
         # Configure encoding for French characters
         self.root.option_add('*Font', 'TkDefaultFont')
-        
-        # Data storage
+          # Data storage
         self.products_data = []
         self.excel_file = None
-        self.data_type = "Entrée"  # Can be "Entrée" or "Sortie"
+        self.data_type = "Entrée"  # Can be "Entrée", "Sortie", or "Retour"
+        
+        # Track sortie/retour history for chronological validation
+        self.sortie_retour_history = {}  # {chassis_number: [(timestamp, action), ...]}
+        
+        # Files for cross-referencing sorties and retours
+        self.sortie_file_data = []  # Data from sortie Excel file
+        self.retour_file_data = []  # Data from retour Excel file
 
         # Updater variables
         self.remote_version = None
@@ -233,11 +250,10 @@ class QRScannerApp:
         # Data type selection frame
         type_frame = ttk.LabelFrame(main_frame, text="Type de Données", padding="10")
         type_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
-        
         ttk.Label(type_frame, text="Type:").grid(row=0, column=0, padx=(0, 5))
         self.data_type_var = tk.StringVar(value="Entrée")
         data_type_combo = ttk.Combobox(type_frame, textvariable=self.data_type_var, width=15, state="readonly")
-        data_type_combo['values'] = ("Entrée", "Sortie")
+        data_type_combo['values'] = ("Entrée", "Sortie", "Retour")
         data_type_combo.grid(row=0, column=1, padx=(0, 10))
         data_type_combo.bind('<<ComboboxSelected>>', self.on_data_type_change)
         
@@ -365,9 +381,8 @@ class QRScannerApp:
     def setup_scanner_listener(self):
         """Setup scanner input detection"""
         self.scanner_entry.focus_set()
-    
     def on_data_type_change(self, event=None):
-        """Handle data type change between Entrée and Sortie"""
+        """Handle data type change between Entrée, Sortie, and Retour"""
         self.data_type = self.data_type_var.get()
         
         # Clear existing data when switching types
@@ -383,15 +398,22 @@ class QRScannerApp:
                 self.update_tree_display()
             else:
                 # Revert the selection
-                old_type = "Sortie" if self.data_type == "Entrée" else "Entrée"
+                if self.data_type == "Entrée":
+                    old_type = "Sortie"
+                elif self.data_type == "Sortie":
+                    old_type = "Retour" if hasattr(self, 'previous_type') and self.previous_type == "Retour" else "Entrée"
+                else:  # Retour
+                    old_type = "Sortie"
                 self.data_type_var.set(old_type)
                 self.data_type = old_type
                 return
         
+        # Store previous type for better reversion logic
+        self.previous_type = self.data_type
+        
         # Update the UI components based on data type
         self.setup_dynamic_ui()
         self.update_tree_display()
-    
     def setup_dynamic_ui(self):
         """Setup UI components based on current data type"""        
         if self.data_type == "Entrée":
@@ -400,8 +422,14 @@ class QRScannerApp:
                     'Couleur', 'Lot', 'Magasin', 'Relation')
             filter_values = ("All Fields", "Reference", "Fournisseur", "Designation", 
                         "Num_Chasse", "Couleur", "Lot", "Magasin")
-        else:  # Sortie
+        elif self.data_type == "Sortie":
             # Update treeview columns for Sortie
+            columns = ('Date', 'Heure', 'DESIGNATION', 'N_CHASSIS', 
+                      'ID_CLIENT', 'NOM_PRENOM', 'WILAYA')
+            filter_values = ("All Fields", "Date", "Heure", "DESIGNATION", 
+                           "N_CHASSIS", "ID_CLIENT", "NOM_PRENOM", "WILAYA")
+        else:  # Retour
+            # Update treeview columns for Retour (same as Sortie)
             columns = ('Date', 'Heure', 'DESIGNATION', 'N_CHASSIS', 
                       'ID_CLIENT', 'NOM_PRENOM', 'WILAYA')
             filter_values = ("All Fields", "Date", "Heure", "DESIGNATION", 
@@ -427,7 +455,6 @@ class QRScannerApp:
         # Update CRUD buttons
         if hasattr(self, 'crud_frame'):
             self.setup_crud_buttons()
-    
     def setup_crud_buttons(self):
         """Setup CRUD buttons based on current data type"""
         # Clear existing buttons
@@ -440,12 +467,22 @@ class QRScannerApp:
                       command=self.edit_selected_record).grid(row=0, column=0, padx=(0, 5))
             ttk.Button(self.crud_frame, text="Delete Selected", 
                       command=self.delete_selected_record).grid(row=0, column=1, padx=5)
-        else:  # Sortie
-            # For Sortie: Change Client and Delete buttons
+        elif self.data_type == "Sortie":
+            # For Sortie: Change Client, Delete, and Load Retour File buttons
             ttk.Button(self.crud_frame, text="Changer Client", 
                       command=self.change_client_for_selected).grid(row=0, column=0, padx=(0, 5))
             ttk.Button(self.crud_frame, text="Delete Selected", 
                       command=self.delete_selected_record).grid(row=0, column=1, padx=5)
+            ttk.Button(self.crud_frame, text="Load Retour File", 
+                      command=self.load_retour_file_for_sortie).grid(row=0, column=2, padx=5)
+        else:  # Retour
+            # For Retour: Change Client, Delete, and Load Sortie File buttons
+            ttk.Button(self.crud_frame, text="Changer Client", 
+                      command=self.change_client_for_selected).grid(row=0, column=0, padx=(0, 5))
+            ttk.Button(self.crud_frame, text="Delete Selected", 
+                      command=self.delete_selected_record).grid(row=0, column=1, padx=5)
+            ttk.Button(self.crud_frame, text="Load Sortie File", 
+                      command=self.load_sortie_file_for_retour).grid(row=0, column=2, padx=5)
     
     def ignore_enter_key(self, event):
         """Ignore Enter key press to prevent accidental processing"""
@@ -493,9 +530,8 @@ class QRScannerApp:
         try:
             # Parse the QR code data
             product_data = self.parse_qr_data(qr_data)
-            
-            # For Sortie type, fetch client info from API first
-            if self.data_type == "Sortie":
+              # For Sortie and Retour types, fetch client info from API first
+            if self.data_type in ["Sortie", "Retour"]:
                 selected_client = None
                 
                 # Try to fetch client info from API using chassis number
@@ -505,7 +541,9 @@ class QRScannerApp:
                         self.root.update()  # Update UI to show status
                         
                         # Fetch client info from APIs
-                        api_client = self.fetch_client_info_from_chassis(product_data.N_CHASSIS)                        # Show confirmation dialog with API results
+                        api_client = self.fetch_client_info_from_chassis(product_data.N_CHASSIS)
+                        
+                        # Show confirmation dialog with API results
                         confirmation_result = self.show_api_client_confirmation(api_client, product_data.N_CHASSIS)
                         
                         if confirmation_result == "CHANGE_CLIENT":
@@ -528,7 +566,7 @@ class QRScannerApp:
                             messagebox.showwarning(
                                 "Moto Non Réservée", 
                                 f"Le châssis '{product_data.N_CHASSIS}' correspond à une moto qui n'est pas encore réservée par un client.\n\n"
-                                f"Cette moto ne peut pas être sortie car elle n'a pas été vendue."
+                                f"Cette moto ne peut pas être {self.data_type.lower()} car elle n'a pas été vendue."
                             )
                             # Clear scanner and don't proceed with client selection
                             self.status_label.config(text="Scan annulé - Moto non réservée", foreground="red")
@@ -546,10 +584,10 @@ class QRScannerApp:
                             return
                             
                 else:
-                    # No chassis number, cannot proceed with Sortie
+                    # No chassis number, cannot proceed with Sortie/Retour
                     messagebox.showerror(
                         "Châssis Manquant",
-                        "Impossible de traiter cette sortie car aucun numéro de châssis n'a été détecté.\n\n"
+                        f"Impossible de traiter ce {self.data_type.lower()} car aucun numéro de châssis n'a été détecté.\n\n"
                         "Veuillez scanner un QR code contenant un numéro de châssis valide."
                     )
                     self.status_label.config(text="Scan annulé - Châssis manquant", foreground="red")
@@ -561,12 +599,12 @@ class QRScannerApp:
                     product_data.ID_CLIENT = selected_client["ID_CLIENT"]
                     product_data.NOM_PRENOM = selected_client["NOM_PRENOM"]
                     product_data.WILAYA = selected_client["WILAYA"]
-                else:                    # User cancelled client selection
+                else:
+                    # User cancelled client selection
                     self.status_label.config(text="Scan cancelled - no client selected", foreground="orange")
                     self.clear_scanner_input()
                     return
-            
-            # Check for duplicates before adding
+              # Type-specific validation and duplicate checking
             if self.data_type == "Entrée":
                 # Check for duplicate Reference
                 for existing_product in self.products_data:
@@ -580,22 +618,61 @@ class QRScannerApp:
                         self.status_label.config(text="Scan annulé - Doublon détecté", foreground="red")
                         self.clear_scanner_input()
                         return
-            else:  # Sortie
-                # Check for duplicate N_CHASSIS
+            elif self.data_type == "Sortie":
+                # Check if chassis is already in sortie but not returned
+                if not self.can_sortie_chassis(product_data.N_CHASSIS):
+                    messagebox.showwarning(
+                        "Sortie Interdite",
+                        f"Le châssis '{product_data.N_CHASSIS}' est déjà en sortie et n'a pas été retourné.\n"
+                        f"Veuillez effectuer le retour avant une nouvelle sortie."
+                    )
+                    self.status_label.config(text="Scan annulé - Chassis déjà en sortie", foreground="red")
+                    self.clear_scanner_input()
+                    return
+                    
+                # Check for duplicate N_CHASSIS in current session
                 for existing_product in self.products_data:
                     if (hasattr(existing_product, 'N_CHASSIS') and 
                         existing_product.N_CHASSIS == product_data.N_CHASSIS):
                         messagebox.showwarning(
                             "Doublon Détecté",
-                            f"Une sortie avec le châssis '{product_data.N_CHASSIS}' existe déjà.\n"
+                            f"Une sortie avec le châssis '{product_data.N_CHASSIS}' existe déjà dans cette session.\n"
                             f"Les doublons ne sont pas autorisés."
                         )
                         self.status_label.config(text="Scan annulé - Doublon détecté", foreground="red")
                         self.clear_scanner_input()
                         return
-              
-            # Add to data list
+            else:  # Retour
+                # Check if chassis is available for return (must be in sortie and not already returned)
+                if not self.can_retour_chassis(product_data.N_CHASSIS):
+                    messagebox.showwarning(
+                        "Retour Impossible",
+                        f"Le châssis '{product_data.N_CHASSIS}' n'est pas disponible pour retour.\n"
+                        f"Il doit d'abord être en sortie et non encore retourné."
+                    )
+                    self.status_label.config(text="Scan annulé - Retour impossible", foreground="red")
+                    self.clear_scanner_input()
+                    return
+                    
+                # Check for duplicate N_CHASSIS in current retour session
+                for existing_product in self.products_data:
+                    if (hasattr(existing_product, 'N_CHASSIS') and 
+                        existing_product.N_CHASSIS == product_data.N_CHASSIS):
+                        messagebox.showwarning(
+                            "Doublon Détecté",
+                            f"Un retour avec le châssis '{product_data.N_CHASSIS}' existe déjà dans cette session.\n"
+                            f"Les doublons ne sont pas autorisés."
+                        )
+                        self.status_label.config(text="Scan annulé - Doublon détecté", foreground="red")
+                        self.clear_scanner_input()
+                        return
+                # Add to data list
             self.products_data.append(product_data)
+            
+            # Update sortie/retour history for chronological tracking
+            if self.data_type in ["Sortie", "Retour"] and hasattr(product_data, 'N_CHASSIS'):
+                action = "sortie" if self.data_type == "Sortie" else "retour"
+                self.update_sortie_retour_history(product_data.N_CHASSIS, action)
             
             # Update display
             self.update_tree_display()
@@ -607,6 +684,9 @@ class QRScannerApp:
             if self.data_type == "Sortie":
                 self.status_label.config(text=f"Sortie ajoutée: {product_data.N_CHASSIS} - {product_data.NOM_PRENOM}", 
                                        foreground="green")
+            elif self.data_type == "Retour":
+                self.status_label.config(text=f"Retour ajouté: {product_data.N_CHASSIS} - {product_data.NOM_PRENOM}", 
+                                       foreground="green")
             else:
                 self.status_label.config(text=f"Produit ajouté: {product_data.Reference}", 
                                        foreground="green")
@@ -616,17 +696,24 @@ class QRScannerApp:
             self.status_label.config(text="Error processing scan", foreground="red")
         
         finally:
-            self.scanning = False
+            self.scanning = False    
     def parse_qr_data(self, qr_data: str):
         """Parse QR code data with backward compatibility"""
         if self.data_type == "Entrée":
             product = ProductData()
             # Leave Magasin empty by default
             product.Magasin = ""
-        else:  # Sortie
+        elif self.data_type == "Sortie":
             from datetime import datetime
             now = datetime.now()
             product = SortieData()
+            product.Date = now.strftime("%d/%m/%Y")
+            product.Heure = now.strftime("%H:%M")
+            product.DESIGNATION = "MOTOS"
+        else:  # Retour
+            from datetime import datetime
+            now = datetime.now()
+            product = RetourData()
             product.Date = now.strftime("%d/%m/%Y")
             product.Heure = now.strftime("%H:%M")
             product.DESIGNATION = "MOTOS"
@@ -717,9 +804,8 @@ class QRScannerApp:
         if self.data_type == "Entrée" and hasattr(product, 'Reference') and product.Reference:
             if product.Reference.startswith('VMS'):
                 product.Fournisseur = "VMS"
-        
-        else:  # Sortie type
-            # For Sortie, extract chassis number and designation from QR data
+        else:  # Sortie or Retour type
+            # For Sortie/Retour, extract chassis number and designation from QR data
             if '\n' in qr_data or '\r' in qr_data:
                 lines = qr_data.replace('\r\n', '\n').replace('\r', '\n').split('\n')
                 lines = [line.strip() for line in lines if line.strip()]
@@ -817,7 +903,6 @@ CUKI I 06/2025"""
             product.Reference = scanner_data.strip()
         
         return product
-    
     def generate_qr_data(self, product_data) -> str:
         """Generate QR code data in structured format based on data type"""
         if isinstance(product_data, ProductData):
@@ -832,6 +917,16 @@ CUKI I 06/2025"""
             ]
         elif isinstance(product_data, SortieData):
             # For Sortie type - generate format with chassis in asterisks
+            qr_lines = [
+                f"*{product_data.N_CHASSIS}*",
+                product_data.DESIGNATION,
+                product_data.ID_CLIENT,
+                product_data.NOM_PRENOM,
+                product_data.WILAYA,
+                f"{product_data.Date} {product_data.Heure}"
+            ]
+        elif isinstance(product_data, RetourData):
+            # For Retour type - generate format with chassis in asterisks (same as Sortie)
             qr_lines = [
                 f"*{product_data.N_CHASSIS}*",
                 product_data.DESIGNATION,
@@ -1054,11 +1149,10 @@ CUKI I 06/2025"""
         
         # Display in new window with scrollable canvas
         qr_window = tk.Toplevel(self.root)
-        
-        # Set title based on data type
+          # Set title based on data type
         if isinstance(product_data, ProductData):
             window_title = f"QR Code - {product_data.Reference}"
-        elif isinstance(product_data, SortieData):
+        elif isinstance(product_data, (SortieData, RetourData)):
             window_title = f"QR Code - {product_data.N_CHASSIS}"
         else:
             window_title = "QR Code"
@@ -1099,8 +1193,7 @@ CUKI I 06/2025"""
         # Product information frame
         info_frame = ttk.LabelFrame(scrollable_frame, text="Informations", padding="10")
         info_frame.pack(fill='x', padx=20, pady=(0, 20))
-        
-        # Display product information based on data type
+          # Display product information based on data type
         if isinstance(product_data, ProductData):
             # For Entrée type
             product_info = [
@@ -1113,9 +1206,11 @@ CUKI I 06/2025"""
                 ("Magasin:", product_data.Magasin),
                 ("Relation:", product_data.Relation)
             ]
-        elif isinstance(product_data, SortieData):
-            # For Sortie type
+        elif isinstance(product_data, (SortieData, RetourData)):
+            # For Sortie and Retour types
+            type_label = "Sortie" if isinstance(product_data, SortieData) else "Retour"
             product_info = [
+                ("Type:", type_label),
                 ("Date:", product_data.Date),
                 ("Heure:", product_data.Heure),
                 ("Désignation:", product_data.DESIGNATION),
@@ -1390,7 +1485,7 @@ CUKI I 06/2025"""
                         'Magasin': 'Magasin',
                         'Photo': 'Relation',
                         'Relation': 'Relation'
-                    }
+                    }                    
                     for _, row in df.iterrows():
                         product = ProductData()
                         for excel_col, product_field in column_mapping.items():
@@ -1398,29 +1493,31 @@ CUKI I 06/2025"""
                                 value = row[excel_col]
                                 setattr(product, product_field, str(value) if pd.notna(value) else "")
                         self.products_data.append(product)
-                else:
-                    # Sortie: logique intelligente pour trouver les colonnes et données
-                    sortie_columns = ['Date', 'Heure', 'DESIGNATION', 'N_CHASSIS', 'ID_CLIENT', 'NOM_PRENOM', 'WILAYA']
+                elif self.data_type in ["Sortie", "Retour"]:
+                    # Sortie/Retour: logique intelligente pour trouver les colonnes et données
+                    data_columns = ['Date', 'Heure', 'DESIGNATION', 'N_CHASSIS', 'ID_CLIENT', 'NOM_PRENOM', 'WILAYA']
+                    data_class = SortieData if self.data_type == "Sortie" else RetourData
+                    title_keyword = self.data_type.upper()  # "SORTIE" or "RETOUR"
                     
                     # Première tentative: vérifier si les colonnes sont directement dans le DataFrame
-                    found = all(col in df.columns for col in sortie_columns)
+                    found = all(col in df.columns for col in data_columns)
                     
                     if found:
                         # Colonnes trouvées directement - charger les données en ignorant les titres
                         for _, row in df.iterrows():
-                            # Ignorer les lignes qui contiennent le titre "SORTIE LIVRAISON"
+                            # Ignorer les lignes qui contiennent le titre
                             row_values = [str(val) if pd.notna(val) else "" for val in row.values]
-                            if any("SORTIE" in val.upper() for val in row_values if isinstance(val, str)):
+                            if any(title_keyword in val.upper() for val in row_values if isinstance(val, str)):
                                 continue  # Ignorer les lignes de titre
                             
                             # Vérifier que la ligne contient des données valides
                             if all(val == "" or val == "nan" for val in row_values):
                                 continue  # Ignorer les lignes vides
                             
-                            product = SortieData()
-                            for col in sortie_columns:
+                            product = data_class()
+                            for col in data_columns:
                                 setattr(product, col, str(row[col]) if pd.notna(row[col]) else "")
-                            self.products_data.append(product)
+                            self.products_data.append(product)                    
                     else:
                         # Colonnes non trouvées - chercher dans le contenu du fichier
                         # Relire le fichier sans en-tête pour analyser le contenu
@@ -1433,7 +1530,7 @@ CUKI I 06/2025"""
                             for index, row in raw_df.iterrows():
                                 row_values = [str(val).strip() if pd.notna(val) else "" for val in row.values]
                                 # Vérifier si cette ligne contient nos colonnes (au moins 4 sur 7)
-                                matches = sum(1 for col in sortie_columns if col in row_values)
+                                matches = sum(1 for col in data_columns if col in row_values)
                                 if matches >= 4:  # Au moins 4 colonnes trouvées
                                     header_row_index = index
                                     break
@@ -1443,45 +1540,46 @@ CUKI I 06/2025"""
                                 df_with_header = pd.read_excel(filename, header=header_row_index)
                                 
                                 # Vérifier que nous avons maintenant les bonnes colonnes
-                                found_columns = [col for col in sortie_columns if col in df_with_header.columns]
+                                found_columns = [col for col in data_columns if col in df_with_header.columns]
                                 
                                 if len(found_columns) >= 4:  # Au moins 4 colonnes trouvées
                                     for _, row in df_with_header.iterrows():
                                         # Ignorer les lignes vides ou qui contiennent le titre
                                         row_values = [str(val) if pd.notna(val) else "" for val in row.values]
-                                        if any("SORTIE" in val.upper() for val in row_values if isinstance(val, str)):
+                                        if any(title_keyword in val.upper() for val in row_values if isinstance(val, str)):
                                             continue  # Ignorer les lignes de titre
                                         
                                         # Vérifier que la ligne contient des données valides
                                         if all(val == "" or val == "nan" for val in row_values):
                                             continue  # Ignorer les lignes vides
                                         
-                                        product = SortieData()
-                                        for col in sortie_columns:
+                                        product = data_class()
+                                        for col in data_columns:
                                             if col in df_with_header.columns:
                                                 value = row[col]
                                                 setattr(product, col, str(value) if pd.notna(value) else "")
                                         self.products_data.append(product)
                                 else:
-                                    raise ValueError("Colonnes Sortie non trouvées dans le fichier")
+                                    raise ValueError(f"Colonnes {self.data_type} non trouvées dans le fichier")
                             else:
-                                raise ValueError("En-tête des colonnes Sortie non trouvé")
+                                raise ValueError(f"En-tête des colonnes {self.data_type} non trouvé")
                                 
                         except Exception as search_error:
                             # Si on ne trouve pas les colonnes, créer une nouvelle table
                             print(f"Erreur lors de la recherche des colonnes: {search_error}")
-                            df = pd.DataFrame(columns=sortie_columns)
+                            df = pd.DataFrame(columns=data_columns)
                             # Ajouter le titre au centre
-                            title_row = ["" for _ in sortie_columns]
-                            title_row[int(len(sortie_columns)/2)] = "SORTIE LIVRAISON JOURNALIERE"
+                            title_row = ["" for _ in data_columns]
+                            title_text = f"{title_keyword} LIVRAISON JOURNALIERE"
+                            title_row[int(len(data_columns)/2)] = title_text
                             
                             # Créer un DataFrame avec le titre et les en-têtes
-                            title_df = pd.DataFrame([title_row], columns=sortie_columns)
-                            empty_row = pd.DataFrame([["" for _ in sortie_columns]], columns=sortie_columns)
+                            title_df = pd.DataFrame([title_row], columns=data_columns)
+                            empty_row = pd.DataFrame([["" for _ in data_columns]], columns=data_columns)
                             final_df = pd.concat([title_df, empty_row, df], ignore_index=True)
                             
                             final_df.to_excel(filename, index=False)
-                            messagebox.showinfo("Info", "Table de sortie créée dans le fichier Excel.")
+                            messagebox.showinfo("Info", f"Table de {self.data_type.lower()} créée dans le fichier Excel.")
                             return
                 
                 self.excel_file = filename
@@ -1515,8 +1613,7 @@ CUKI I 06/2025"""
             
             # Create DataFrame
             df = pd.DataFrame(data_list)
-            
-            # Set appropriate column headers based on data type
+              # Set appropriate column headers based on data type
             if self.data_type == "Entrée":
                 # Rename columns for Entrée type (8 columns)
                 df.columns = [
@@ -1526,8 +1623,8 @@ CUKI I 06/2025"""
                 ]
                 # Save normally for Entrée
                 df.to_excel(self.excel_file, index=False)
-            else:  # Sortie
-                # For Sortie type (7 columns)
+            elif self.data_type in ["Sortie", "Retour"]:
+                # For Sortie and Retour types (7 columns)
                 df.columns = [
                     'Date', 'Heure', 'DESIGNATION', 
                     'N_CHASSIS', 'ID_CLIENT', 'NOM_PRENOM', 
@@ -1550,7 +1647,8 @@ CUKI I 06/2025"""
                     
                     # Merge cells for title (A1:G1 to span all columns)
                     worksheet.merge_cells('A1:G1')
-                    worksheet['A1'] = "SORTIE LIVRAISON JOURNALIERE"
+                    title_text = f"{self.data_type.upper()} LIVRAISON JOURNALIERE"
+                    worksheet['A1'] = title_text
                     worksheet['A1'].font = title_font
                     worksheet['A1'].alignment = center_alignment
                     
@@ -1585,18 +1683,22 @@ CUKI I 06/2025"""
             f"Cela supprimera {len(self.products_data)} produits.",
             icon='warning'
         )
-        
         if result:
-            # Clear all data
+            # Clear all data and unselect current Excel file
             self.products_data = []
             self.excel_file = None
+            
+            # Clear cross-reference file data as well
+            self.sortie_file_data = []
+            self.retour_file_data = []
+            self.sortie_retour_history = {}
             
             # Update UI
             self.update_tree_display()
             self.file_label.config(text="No file loaded")
             self.clear_scanner_input()
             
-            messagebox.showinfo("Succès", "Toutes les données ont été effacées")
+            messagebox.showinfo("Succès", "Toutes les données ont été effacées et le fichier Excel a été désélectionné")
 
     def edit_selected_record(self):
         """Edit the selected record in the tree"""
@@ -1653,7 +1755,6 @@ CUKI I 06/2025"""
                 self.update_tree_display()
                 messagebox.showinfo("Succès", f"{self.data_type} supprimé avec succès")
             else:                messagebox.showerror("Erreur", f"Impossible de trouver l'{self.data_type.lower()} à supprimer")
-    
     def find_product_index_by_values(self, values):
         """Find the index of a product in products_data by tree values"""        
         for i, product in enumerate(self.products_data):
@@ -1663,7 +1764,7 @@ CUKI I 06/2025"""
                     getattr(product, 'Designation', '') == values[2] and
                     getattr(product, 'Num_Chasse', '') == values[3]):
                     return i
-            else:  # Sortie
+            else:  # Sortie or Retour
                 if (getattr(product, 'Date', '') == values[0] and 
                     getattr(product, 'Heure', '') == values[1] and 
                     getattr(product, 'DESIGNATION', '') == values[2] and
@@ -3331,6 +3432,215 @@ del "%~f0"
                 f"DairDzair E-Commerce & INNOVATION\n\n"
                 f"© 2024-2025 DairDzair E-Commerce & INNOVATION"
             )
+
+    def can_sortie_chassis(self, chassis_number):
+        """Check if a chassis can be sortie (not already in sortie without return)"""
+        from datetime import datetime
+        
+        # Check in sortie_retour_history for this chassis
+        if chassis_number in self.sortie_retour_history:
+            history = self.sortie_retour_history[chassis_number]
+            # Get the last action for this chassis
+            if history:
+                last_timestamp, last_action = history[-1]
+                # If last action was sortie, cannot sortie again
+                if last_action == "sortie":
+                    return False
+        
+        # Check in retour file data to see if this chassis has been returned
+        for retour_record in self.retour_file_data:
+            if hasattr(retour_record, 'N_CHASSIS') and retour_record.N_CHASSIS == chassis_number:
+                # Check if there's a corresponding sortie after this retour
+                retour_time = self.parse_datetime(retour_record.Date, retour_record.Heure)
+                
+                # Look for sortie after this retour
+                sortie_after_retour = False
+                for sortie_record in self.sortie_file_data:
+                    if hasattr(sortie_record, 'N_CHASSIS') and sortie_record.N_CHASSIS == chassis_number:
+                        sortie_time = self.parse_datetime(sortie_record.Date, sortie_record.Heure)
+                        if sortie_time > retour_time:
+                            sortie_after_retour = True
+                            break
+                
+                if not sortie_after_retour:
+                    # No sortie after this retour, so chassis is available
+                    return True
+        
+        # Check current sortie data for this chassis
+        for product in self.products_data:
+            if (hasattr(product, 'N_CHASSIS') and 
+                product.N_CHASSIS == chassis_number and 
+                isinstance(product, SortieData)):
+                return False  # Already in current sortie session
+        
+        # Check in sortie file data without corresponding retour
+        for sortie_record in self.sortie_file_data:
+            if hasattr(sortie_record, 'N_CHASSIS') and sortie_record.N_CHASSIS == chassis_number:
+                # Check if this sortie has a corresponding retour
+                sortie_time = self.parse_datetime(sortie_record.Date, sortie_record.Heure)
+                
+                retour_found = False
+                for retour_record in self.retour_file_data:
+                    if hasattr(retour_record, 'N_CHASSIS') and retour_record.N_CHASSIS == chassis_number:
+                        retour_time = self.parse_datetime(retour_record.Date, retour_record.Heure)
+                        if retour_time > sortie_time:
+                            retour_found = True
+                            break
+                
+                if not retour_found:
+                    return False  # Sortie without retour
+        
+        return True  # Can sortie
+    
+    def can_retour_chassis(self, chassis_number):
+        """Check if a chassis can be retour (must be in sortie and not already returned)"""
+        from datetime import datetime
+        
+        # Check in sortie_retour_history for this chassis
+        if chassis_number in self.sortie_retour_history:
+            history = self.sortie_retour_history[chassis_number]
+            # Get the last action for this chassis
+            if history:
+                last_timestamp, last_action = history[-1]
+                # If last action was retour, cannot retour again
+                if last_action == "retour":
+                    return False
+                # If last action was sortie, can retour
+                if last_action == "sortie":
+                    return True
+        
+        # Check current sortie data for this chassis
+        for product in self.products_data:
+            if (hasattr(product, 'N_CHASSIS') and 
+                product.N_CHASSIS == chassis_number and 
+                isinstance(product, SortieData)):
+                return True  # Found in current sortie session
+        
+        # Check in sortie file data for this chassis
+        chassis_found_in_sortie = False
+        latest_sortie_time = None
+        
+        for sortie_record in self.sortie_file_data:
+            if hasattr(sortie_record, 'N_CHASSIS') and sortie_record.N_CHASSIS == chassis_number:
+                chassis_found_in_sortie = True
+                sortie_time = self.parse_datetime(sortie_record.Date, sortie_record.Heure)
+                if latest_sortie_time is None or sortie_time > latest_sortie_time:
+                    latest_sortie_time = sortie_time
+        
+        if not chassis_found_in_sortie:
+            return False  # Not found in any sortie
+        
+        # Check if this chassis has a retour after the latest sortie
+        for retour_record in self.retour_file_data:
+            if hasattr(retour_record, 'N_CHASSIS') and retour_record.N_CHASSIS == chassis_number:
+                retour_time = self.parse_datetime(retour_record.Date, retour_record.Heure)
+                if retour_time > latest_sortie_time:
+                    return False  # Already returned after latest sortie
+        
+        return True  # Can retour
+    
+    def parse_datetime(self, date_str, time_str):
+        """Parse date and time strings to datetime object"""
+        from datetime import datetime
+        try:
+            # Handle different date formats
+            if '/' in date_str:
+                # Format: DD/MM/YYYY
+                date_parts = date_str.split('/')
+                if len(date_parts) == 3:
+                    day, month, year = date_parts
+                    dt_str = f"{year}-{month.zfill(2)}-{day.zfill(2)} {time_str}"
+                    return datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
+            else:
+                # Try other formats
+                dt_str = f"{date_str} {time_str}"
+                return datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
+        except:
+            # Fallback to current time if parsing fails
+            from datetime import datetime
+            return datetime.now()
+    
+    def load_retour_file_for_sortie(self):
+        """Load retour Excel file for cross-referencing with sortie data"""
+        filename = filedialog.askopenfilename(
+            title="Charger fichier Retour pour référence",
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
+        )
+        if filename:
+            try:
+                df = pd.read_excel(filename)
+                self.retour_file_data = []
+                
+                # Expected columns for retour data
+                retour_columns = ['Date', 'Heure', 'DESIGNATION', 'N_CHASSIS', 'ID_CLIENT', 'NOM_PRENOM', 'WILAYA']
+                
+                # Load retour data similar to sortie loading logic
+                for _, row in df.iterrows():
+                    # Skip title rows
+                    row_values = [str(val) if pd.notna(val) else "" for val in row.values]
+                    if any("RETOUR" in val.upper() for val in row_values if isinstance(val, str)):
+                        continue
+                    
+                    if all(val == "" or val == "nan" for val in row_values):
+                        continue
+                    
+                    retour_record = RetourData()
+                    for col in retour_columns:
+                        if col in df.columns:
+                            value = row[col]
+                            setattr(retour_record, col, str(value) if pd.notna(value) else "")
+                    self.retour_file_data.append(retour_record)
+                
+                messagebox.showinfo("Succès", f"Fichier retour chargé: {len(self.retour_file_data)} enregistrements")
+                
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Impossible de charger le fichier retour: {str(e)}")
+    
+    def load_sortie_file_for_retour(self):
+        """Load sortie Excel file for cross-referencing with retour data"""
+        filename = filedialog.askopenfilename(
+            title="Charger fichier Sortie pour référence",
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
+        )
+        if filename:
+            try:
+                df = pd.read_excel(filename)
+                self.sortie_file_data = []
+                
+                # Expected columns for sortie data
+                sortie_columns = ['Date', 'Heure', 'DESIGNATION', 'N_CHASSIS', 'ID_CLIENT', 'NOM_PRENOM', 'WILAYA']
+                
+                # Load sortie data similar to other loading logic
+                for _, row in df.iterrows():
+                    # Skip title rows
+                    row_values = [str(val) if pd.notna(val) else "" for val in row.values]
+                    if any("SORTIE" in val.upper() for val in row_values if isinstance(val, str)):
+                        continue
+                    
+                    if all(val == "" or val == "nan" for val in row_values):
+                        continue
+                    
+                    sortie_record = SortieData()
+                    for col in sortie_columns:
+                        if col in df.columns:
+                            value = row[col]
+                            setattr(sortie_record, col, str(value) if pd.notna(value) else "")
+                    self.sortie_file_data.append(sortie_record)
+                
+                messagebox.showinfo("Succès", f"Fichier sortie chargé: {len(self.sortie_file_data)} enregistrements")
+                
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Impossible de charger le fichier sortie: {str(e)}")
+    
+    def update_sortie_retour_history(self, chassis_number, action):
+        """Update the sortie/retour history for chronological tracking"""
+        from datetime import datetime
+        
+        if chassis_number not in self.sortie_retour_history:
+            self.sortie_retour_history[chassis_number] = []
+        
+        timestamp = datetime.now()
+        self.sortie_retour_history[chassis_number].append((timestamp, action))
 
 def main():
     """Main function to run the application"""

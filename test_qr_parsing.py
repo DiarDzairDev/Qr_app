@@ -7,7 +7,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(__file__))
 
-from qr_scanner import QRScannerApp, ProductData, SortieData
+from qr_scanner import QRScannerApp, ProductData, SortieData, RetourData
 
 def test_legacy_parsing():
     """Test le parsing du format legacy depuis scan.txt"""
@@ -71,6 +71,20 @@ CUKI II 07/2025"""
     print(f"   WILAYA: '{sortie1.WILAYA}'")
     print()
     
+    # Test pour type Retour
+    app.data_type = "Retour"
+    
+    print("4. Test données QR - Retour CUKI191858:")
+    retour1 = app.parse_qr_data(test_data_2)
+    print(f"   Date: '{retour1.Date}'")
+    print(f"   Heure: '{retour1.Heure}'")
+    print(f"   DESIGNATION: '{retour1.DESIGNATION}'")
+    print(f"   N_CHASSIS: '{retour1.N_CHASSIS}'")
+    print(f"   ID_CLIENT: '{retour1.ID_CLIENT}'")
+    print(f"   NOM_PRENOM: '{retour1.NOM_PRENOM}'")
+    print(f"   WILAYA: '{retour1.WILAYA}'")
+    print()
+    
     # Test génération QR
     print("=== TEST GENERATION QR ===\n")
     
@@ -85,6 +99,13 @@ CUKI II 07/2025"""
     qr_data_sortie = app.generate_qr_data(sortie1)
     print("   Données générées:")
     for i, line in enumerate(qr_data_sortie.split('\n')):
+        print(f"   Ligne {i+1}: '{line}'")
+    print()
+    
+    print("6. Génération QR depuis RetourData:")
+    qr_data_retour = app.generate_qr_data(retour1)
+    print("   Données générées:")
+    for i, line in enumerate(qr_data_retour.split('\n')):
         print(f"   Ligne {i+1}: '{line}'")
     print()
     
