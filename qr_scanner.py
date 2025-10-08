@@ -30,7 +30,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- Configuration for Updater ---
 # 1. Define the current version of the running application
-CURRENT_VERSION = "1.1.1" 
+CURRENT_VERSION = "1.1.3" 
 # 2. Define the URL where the latest version number is stored (e.g., a raw file on GitHub)
 #    IMPORTANT: Replace this with the actual URL to a plain text file containing ONLY the latest version number (e.g., "1.0.1")
 REMOTE_VERSION_URL = "https://raw.githubusercontent.com/DiarDzairDev/Qr_app/refs/heads/main/version.txt" # Placeholder URL
@@ -362,10 +362,10 @@ class QRScannerApp:
         data_frame.rowconfigure(2, weight=1)
         
         # QR Generation frame
-        qr_frame = ttk.LabelFrame(main_frame, text="QR Code Generation", padding="10")
+        qr_frame = ttk.LabelFrame(main_frame, text="QR Code Generation", padding="10")        
         qr_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
         
-        ttk.Button(qr_frame, text="Generate QR from Selected Row", 
+        ttk.Button(qr_frame, text="Générer QR Code(s)", 
                   command=self.generate_qr_from_selection).grid(row=0, column=0, padx=(0, 5))
         
         # Minimal skeleton to ensure the app runs
@@ -466,7 +466,7 @@ class QRScannerApp:
             ttk.Button(self.crud_frame, text="Edit Selected", 
                       command=self.edit_selected_record).grid(row=0, column=0, padx=(0, 5))
             ttk.Button(self.crud_frame, text="Delete Selected", 
-                      command=self.delete_selected_record).grid(row=0, column=1, padx=5)
+                      command=self.delete_selected_record).grid(row=0, column=1, padx=5)        
         elif self.data_type == "Sortie":
             # For Sortie: Change Client, Delete, and Load Retour File buttons
             ttk.Button(self.crud_frame, text="Changer Client", 
@@ -475,6 +475,11 @@ class QRScannerApp:
                       command=self.delete_selected_record).grid(row=0, column=1, padx=5)
             ttk.Button(self.crud_frame, text="Load Retour File", 
                       command=self.load_retour_file_for_sortie).grid(row=0, column=2, padx=5)
+            
+            # Add reference panel button if reference data exists
+            if self.retour_file_data:
+                ttk.Button(self.crud_frame, text="Voir Référence", 
+                          command=self.show_reference_panel).grid(row=0, column=3, padx=5)
         else:  # Retour
             # For Retour: Change Client, Delete, and Load Sortie File buttons
             ttk.Button(self.crud_frame, text="Changer Client", 
@@ -483,6 +488,11 @@ class QRScannerApp:
                       command=self.delete_selected_record).grid(row=0, column=1, padx=5)
             ttk.Button(self.crud_frame, text="Load Sortie File", 
                       command=self.load_sortie_file_for_retour).grid(row=0, column=2, padx=5)
+            
+            # Add reference panel button if reference data exists
+            if self.sortie_file_data:
+                ttk.Button(self.crud_frame, text="Voir Référence", 
+                          command=self.show_reference_panel).grid(row=0, column=3, padx=5)
     
     def ignore_enter_key(self, event):
         """Ignore Enter key press to prevent accidental processing"""
@@ -516,7 +526,7 @@ class QRScannerApp:
     def auto_process_scan(self):
         """Automatically process scan after delay"""
         current_text = self.scanner_entry.get("1.0", tk.END).strip()
-        if current_text and not self.scanning:
+        if (current_text and not self.scanning):
             self.scanning = True
             self.process_scanned_data(None)
     def process_scanned_data(self, event=None):
@@ -717,13 +727,12 @@ class QRScannerApp:
             product.Date = now.strftime("%d/%m/%Y")
             product.Heure = now.strftime("%H:%M")
             product.DESIGNATION = "MOTOS"
-        
         if self.data_type == "Entrée":
             # Check if data contains line breaks (structured format)
             if '\n' in qr_data or '\r' in qr_data:
-                # Split by lines and clean up
+                # Split by lines and clean up - PRESERVE empty lines to maintain field positions
                 lines = qr_data.replace('\r\n', '\n').replace('\r', '\n').split('\n')
-                lines = [line.strip() for line in lines if line.strip()]
+                lines = [line.strip() for line in lines]  # Strip whitespace but keep empty lines
                 
                 # Check if first line starts with asterisk (legacy format)
                 if lines and lines[0].startswith('*') and lines[0].endswith('*'):
@@ -733,9 +742,9 @@ class QRScannerApp:
                         'Designation',   # MOTOCYCLE CUKI -I-
                         'Fournisseur',   # CUKI
                         'Couleur',       # bleu nuit/ blanc
-                        'Magasin',       # Unité Oued-Ghir
+                        'Magasin',       # Unité Oued-Ghir (can be empty)
                         'Num_Chasse'     # CUKI I 06/2025
-                    ]
+                    ]                    
                     for i, line in enumerate(lines):
                         if i < len(legacy_field_mapping):
                             field_name = legacy_field_mapping[i]
@@ -745,6 +754,9 @@ class QRScannerApp:
                                     setattr(product, field_name, line[1:-1])  # Remove asterisks
                                 else:
                                     setattr(product, field_name, line)
+                            elif field_name == 'Magasin':
+                                # Always keep Magasin empty
+                                setattr(product, field_name, "")
                             else:
                                 setattr(product, field_name, line)
                     
@@ -763,10 +775,16 @@ class QRScannerApp:
                         'Magasin',
                         'Relation'
                     ]
-                    
                     for i, line in enumerate(lines):
                         if i < len(field_mapping):
-                            setattr(product, field_mapping[i], line)
+                            field_name = field_mapping[i]
+                            if field_name == 'Magasin':
+                                # Always keep Magasin empty
+                                setattr(product, field_name, "")
+                            else:
+                                setattr(product, field_name, line)
+                    # Ensure Magasin is always empty
+                    product.Magasin = ""
             else:
                 # Single line input - check for concatenated format
                 # Handle "*VMSDZ06CUKI191858*MOTOCYCLE CUKI -II-CUKI" format
@@ -876,12 +894,11 @@ CUKI I 06/2025"""
         # Ensure proper encoding for French characters
         if isinstance(scanner_data, bytes):
             scanner_data = scanner_data.decode('utf-8', errors='ignore')
-        
-        # Check if the data contains any line break characters
+          # Check if the data contains any line break characters
         if '\n' in scanner_data or '\r' in scanner_data:
-            # Parse normally using line breaks
+            # Parse normally using line breaks - PRESERVE empty lines to maintain field positions
             lines = scanner_data.replace('\r\n', '\n').replace('\r', '\n').split('\n')
-            lines = [line.strip() for line in lines if line.strip()]
+            lines = [line.strip() for line in lines]  # Strip whitespace but keep empty lines
             
             # Map lines to fields based on position (generic order)
             field_mapping = [
@@ -894,17 +911,23 @@ CUKI I 06/2025"""
                 'Magasin',
                 'Relation'
             ]
-            
             for i, line in enumerate(lines):
                 if i < len(field_mapping):
-                    setattr(product, field_mapping[i], line)
+                    field_name = field_mapping[i]
+                    if field_name == 'Magasin':
+                        # Always keep Magasin empty
+                        setattr(product, field_name, "")
+                    else:
+                        setattr(product, field_name, line)
+            # Ensure Magasin is always empty
+            product.Magasin = ""
         else:
             # No line breaks found - treat entire input as Reference only
             product.Reference = scanner_data.strip()
         
         return product
     def generate_qr_data(self, product_data) -> str:
-        """Generate QR code data in structured format based on data type"""
+        """Generate QR code data in structured format based on data type"""        
         if isinstance(product_data, ProductData):
             # For Entrée type - generate legacy format with asterisks
             qr_lines = [
@@ -912,7 +935,7 @@ CUKI I 06/2025"""
                 product_data.Designation,
                 product_data.Fournisseur,
                 product_data.Couleur,
-                product_data.Magasin,
+                "",  # Magasin always empty
                 product_data.Num_Chasse
             ]
         elif isinstance(product_data, SortieData):
@@ -934,7 +957,7 @@ CUKI I 06/2025"""
                 product_data.NOM_PRENOM,
                 product_data.WILAYA,
                 f"{product_data.Date} {product_data.Heure}"
-            ]
+            ]        
         else:
             # Fallback - assume it's Entrée format
             qr_lines = [
@@ -944,7 +967,7 @@ CUKI I 06/2025"""
                 getattr(product_data, 'Num_Chasse', ''),
                 getattr(product_data, 'Couleur', ''),
                 getattr(product_data, 'Lot', ''),
-                getattr(product_data, 'Magasin', ''),
+                "",  # Magasin always empty
                 getattr(product_data, 'Relation', '')
             ]
         
@@ -1056,22 +1079,28 @@ CUKI I 06/2025"""
                 )
             # Use original index for proper identification
             self.tree.insert('', 'end', values=values, tags=(str(original_index),))
-    
     def generate_qr_from_selection(self):
-        """Generate QR code from selected row"""
+        """Generate QR code(s) from selected row(s)"""
         selection = self.tree.selection()
         if not selection:
-            messagebox.showwarning("No Selection", "Please select a row to generate QR code")
+            messagebox.showwarning("No Selection", "Veuillez sélectionner une ou plusieurs lignes pour générer les codes QR")
             return
         
-        # Get selected item index
-        item = selection[0]
-        tags = self.tree.item(item, 'tags')
-        if tags:
-            index = int(tags[0])
-            product = self.products_data[index]
-            # Generate and display QR code
-            self.show_qr_code(product)
+        # Get selected products
+        selected_products = []
+        for item in selection:
+            tags = self.tree.item(item, 'tags')
+            if tags:
+                index = int(tags[0])
+                product = self.products_data[index]
+                selected_products.append(product)
+        
+        if len(selected_products) == 1:
+            # Single selection - show individual QR code
+            self.show_qr_code(selected_products[0])
+        else:
+            # Multiple selection - show multiple QR codes
+            self.show_multiple_qr_codes(selected_products)
     
     def show_qr_code(self, product_data):
         """Display QR code with logo and rounded pixels in a new window"""
@@ -1298,8 +1327,7 @@ CUKI I 06/2025"""
         draw.pieslice([x2 - 2 * corner_radius, y1, x2, y1 + 2 * corner_radius], 270, 360, fill=fill)
         draw.pieslice([x1, y2 - 2 * corner_radius, x1 + 2 * corner_radius, y2], 90, 180, fill=fill)
         draw.pieslice([x2 - 2 * corner_radius, y2 - 2 * corner_radius, x2, y2], 0, 90, fill=fill)
-    
-    def print_qr_code(self, qr_image, product_data):
+    def print_qr_code(self, qr_image, product_data, show_success_message=True):
         """Print only the QR code and open Windows print dialog directly"""
         try:
             import tempfile
@@ -1309,7 +1337,7 @@ CUKI I 06/2025"""
             
             # Create a high-resolution version of just the QR code for printing
             # Scale up the QR code for better print quality
-            print_size = 600  # Larger size for better print quality
+            print_size = 800  # Increased from 600 to 800 for better quality
             qr_print_image = qr_image.resize((print_size, print_size), Image.Resampling.LANCZOS)
             
             # Save to temporary file with high DPI
@@ -1336,15 +1364,14 @@ CUKI I 06/2025"""
                     hDC.CreatePrinterDC(printer_name)
                     
                     # Start print job
-                    hDC.StartDoc(f"QR Code - {product_data.Reference}")
+                    hDC.StartDoc(f"QR Code - {getattr(product_data, 'Reference', getattr(product_data, 'N_CHASSIS', 'Code'))}")
                     hDC.StartPage()
                     
                     # Get printer capabilities
                     printable_area = hDC.GetDeviceCaps(win32con.HORZRES), hDC.GetDeviceCaps(win32con.VERTRES)
                     printer_size = hDC.GetDeviceCaps(win32con.HORZSIZE), hDC.GetDeviceCaps(win32con.VERTSIZE)
-                    
-                    # Calculate position to center QR code
-                    qr_size_mm = 50  # 50mm QR code
+                      # Calculate position to center QR code
+                    qr_size_mm = 100  # 100mm QR code (doubled from 50mm)
                     qr_size_pixels = int((qr_size_mm / printer_size[0]) * printable_area[0])
                     
                     x = (printable_area[0] - qr_size_pixels) // 2
@@ -1359,7 +1386,8 @@ CUKI I 06/2025"""
                     hDC.EndDoc()
                     hDC.DeleteDC()
                     
-                    messagebox.showinfo("Impression", "QR code envoyé à l'imprimante avec succès!")
+                    if show_success_message:
+                        messagebox.showinfo("Impression", "QR code envoyé à l'imprimante avec succès!")
                     
                 except ImportError:
                     # Fallback: Open print dialog through default image viewer
@@ -1374,28 +1402,30 @@ CUKI I 06/2025"""
             elif system == "Darwin":  # macOS
                 # Use lpr command for direct printing
                 subprocess.run(['lpr', temp_path], check=True)
-                messagebox.showinfo("Impression", "QR code envoyé à l'imprimante!")
+                if show_success_message:
+                    messagebox.showinfo("Impression", "QR code envoyé à l'imprimante!")
                 
             else:  # Linux
                 # Use lp command for direct printing
                 subprocess.run(['lp', temp_path], check=True)
-                messagebox.showinfo("Impression", "QR code envoyé à l'imprimante!")
+                if show_success_message:
+                    messagebox.showinfo("Impression", "QR code envoyé à l'imprimante!")
                 
         except Exception as e:
-            messagebox.showerror("Erreur d'impression", f"Impossible d'imprimer: {str(e)}")
+            if show_success_message:
+                messagebox.showerror("Erreur d'impression", f"Impossible d'imprimer: {str(e)}")
+            else:
+                print(f"Erreur d'impression: {str(e)}")
     
     def create_printable_qr_image(self, qr_image, product_data):
         """Create a printable image with QR code and product information"""
         try:
-            from PIL import ImageFont
-            
-            # Create a larger canvas for printing (A4-like proportions)
-            canvas_width = 800
-            canvas_height = 1000
+            from PIL import ImageFont            # Create a larger canvas for printing (A4-like proportions)
+            canvas_width = 1000  # Increased to accommodate larger QR code
+            canvas_height = 1200  # Increased to accommodate larger QR code
             canvas = Image.new('RGB', (canvas_width, canvas_height), 'white')
-            
-            # Resize QR code for printing (larger)
-            qr_size = 400
+              # Resize QR code for printing (larger for 100mm size)
+            qr_size = 500  # Increased from 400 to maintain quality at 100mm
             qr_resized = qr_image.resize((qr_size, qr_size), Image.Resampling.LANCZOS)
             
             # Position QR code on canvas
@@ -1492,32 +1522,55 @@ CUKI I 06/2025"""
                             if excel_col in df.columns:
                                 value = row[excel_col]
                                 setattr(product, product_field, str(value) if pd.notna(value) else "")
-                        self.products_data.append(product)
+                        self.products_data.append(product)                
                 elif self.data_type in ["Sortie", "Retour"]:
                     # Sortie/Retour: logique intelligente pour trouver les colonnes et données
                     data_columns = ['Date', 'Heure', 'DESIGNATION', 'N_CHASSIS', 'ID_CLIENT', 'NOM_PRENOM', 'WILAYA']
                     data_class = SortieData if self.data_type == "Sortie" else RetourData
                     title_keyword = self.data_type.upper()  # "SORTIE" or "RETOUR"
                     
+                    print(f"DEBUG: Loading {self.data_type} file with {len(df)} rows")
+                    print(f"DEBUG: Available columns: {list(df.columns)}")
+                    
                     # Première tentative: vérifier si les colonnes sont directement dans le DataFrame
                     found = all(col in df.columns for col in data_columns)
                     
                     if found:
-                        # Colonnes trouvées directement - charger les données en ignorant les titres
-                        for _, row in df.iterrows():
-                            # Ignorer les lignes qui contiennent le titre
-                            row_values = [str(val) if pd.notna(val) else "" for val in row.values]
-                            if any(title_keyword in val.upper() for val in row_values if isinstance(val, str)):
-                                continue  # Ignorer les lignes de titre
-                            
-                            # Vérifier que la ligne contient des données valides
-                            if all(val == "" or val == "nan" for val in row_values):
-                                continue  # Ignorer les lignes vides
-                            
-                            product = data_class()
-                            for col in data_columns:
-                                setattr(product, col, str(row[col]) if pd.notna(row[col]) else "")
-                            self.products_data.append(product)                    
+                        # Colonnes trouvées directement - charger les données avec logique améliorée
+                        loaded_count = 0
+                        for index, row in df.iterrows():
+                            try:
+                                # Vérifier d'abord si nous avons un chassis valide
+                                chassis_val = str(row['N_CHASSIS']) if pd.notna(row['N_CHASSIS']) else ""
+                                
+                                # Skip if no chassis value or if it's too short
+                                if not chassis_val or chassis_val.strip() == "" or chassis_val == "nan":
+                                    continue
+                                
+                                if len(chassis_val.strip()) < 3:
+                                    continue
+                                
+                                # Skip obvious header/title rows
+                                row_text = " ".join([str(val) for val in row.values if pd.notna(val)]).upper()
+                                if (title_keyword in row_text and "LIVRAISON" in row_text) or "N_CHASSIS" in row_text:
+                                    continue
+                                
+                                product = data_class()
+                                for col in data_columns:
+                                    value = row[col]
+                                    setattr(product, col, str(value) if pd.notna(value) else "")
+                                self.products_data.append(product)
+                                loaded_count += 1
+                                
+                                if loaded_count <= 3:
+                                    print(f"DEBUG: Loaded record {loaded_count}: Chassis={chassis_val}")
+                                    
+                            except Exception as e:
+                                print(f"DEBUG: Error processing row {index}: {e}")
+                                continue
+                        
+                        print(f"DEBUG: Successfully loaded {loaded_count} records")
+                        
                     else:
                         # Colonnes non trouvées - chercher dans le contenu du fichier
                         # Relire le fichier sans en-tête pour analyser le contenu
@@ -1538,27 +1591,46 @@ CUKI I 06/2025"""
                             if header_row_index is not None:
                                 # Relire le fichier avec l'en-tête trouvé
                                 df_with_header = pd.read_excel(filename, header=header_row_index)
-                                
-                                # Vérifier que nous avons maintenant les bonnes colonnes
+                                  # Vérifier que nous avons maintenant les bonnes colonnes
                                 found_columns = [col for col in data_columns if col in df_with_header.columns]
                                 
                                 if len(found_columns) >= 4:  # Au moins 4 colonnes trouvées
-                                    for _, row in df_with_header.iterrows():
-                                        # Ignorer les lignes vides ou qui contiennent le titre
-                                        row_values = [str(val) if pd.notna(val) else "" for val in row.values]
-                                        if any(title_keyword in val.upper() for val in row_values if isinstance(val, str)):
-                                            continue  # Ignorer les lignes de titre
-                                        
-                                        # Vérifier que la ligne contient des données valides
-                                        if all(val == "" or val == "nan" for val in row_values):
-                                            continue  # Ignorer les lignes vides
-                                        
-                                        product = data_class()
-                                        for col in data_columns:
-                                            if col in df_with_header.columns:
-                                                value = row[col]
-                                                setattr(product, col, str(value) if pd.notna(value) else "")
-                                        self.products_data.append(product)
+                                    loaded_count = 0
+                                    for index, row in df_with_header.iterrows():
+                                        try:
+                                            # Vérifier d'abord si nous avons un chassis valide
+                                            chassis_val = ""
+                                            if 'N_CHASSIS' in df_with_header.columns:
+                                                chassis_val = str(row['N_CHASSIS']) if pd.notna(row['N_CHASSIS']) else ""
+                                            
+                                            # Skip if no chassis value or if it's too short
+                                            if not chassis_val or chassis_val.strip() == "" or chassis_val == "nan":
+                                                continue
+                                            
+                                            if len(chassis_val.strip()) < 3:
+                                                continue
+                                            
+                                            # Skip obvious header/title rows
+                                            row_text = " ".join([str(val) for val in row.values if pd.notna(val)]).upper()
+                                            if (title_keyword in row_text and "LIVRAISON" in row_text) or "N_CHASSIS" in row_text:
+                                                continue
+                                            
+                                            product = data_class()
+                                            for col in data_columns:
+                                                if col in df_with_header.columns:
+                                                    value = row[col]
+                                                    setattr(product, col, str(value) if pd.notna(value) else "")
+                                            self.products_data.append(product)
+                                            loaded_count += 1
+                                            
+                                            if loaded_count <= 3:
+                                                print(f"DEBUG: Loaded record {loaded_count}: Chassis={chassis_val}")
+                                                
+                                        except Exception as e:
+                                            print(f"DEBUG: Error processing row {index}: {e}")
+                                            continue
+                                    
+                                    print(f"DEBUG: Successfully loaded {loaded_count} records from header-found section")
                                 else:
                                     raise ValueError(f"Colonnes {self.data_type} non trouvées dans le fichier")
                             else:
@@ -1682,7 +1754,7 @@ CUKI I 06/2025"""
             f"Êtes-vous sûr de vouloir effacer toutes les données?\n"
             f"Cela supprimera {len(self.products_data)} produits.",
             icon='warning'
-        )
+        )        
         if result:
             # Clear all data and unselect current Excel file
             self.products_data = []
@@ -1692,6 +1764,9 @@ CUKI I 06/2025"""
             self.sortie_file_data = []
             self.retour_file_data = []
             self.sortie_retour_history = {}
+            
+            # Hide reference panel if open
+            self.hide_reference_panel()
             
             # Update UI
             self.update_tree_display()
@@ -3491,10 +3566,13 @@ del "%~f0"
                     return False  # Sortie without retour
         
         return True  # Can sortie
-    
     def can_retour_chassis(self, chassis_number):
         """Check if a chassis can be retour (must be in sortie and not already returned)"""
         from datetime import datetime
+        
+        print(f"DEBUG: Checking if chassis {chassis_number} can be returned")
+        print(f"DEBUG: Sortie file data count: {len(self.sortie_file_data)}")
+        print(f"DEBUG: Current products data count: {len(self.products_data)}")
         
         # Check in sortie_retour_history for this chassis
         if chassis_number in self.sortie_retour_history:
@@ -3502,11 +3580,14 @@ del "%~f0"
             # Get the last action for this chassis
             if history:
                 last_timestamp, last_action = history[-1]
+                print(f"DEBUG: History found - last action: {last_action}")
                 # If last action was retour, cannot retour again
                 if last_action == "retour":
+                    print(f"DEBUG: Cannot retour - already returned")
                     return False
                 # If last action was sortie, can retour
                 if last_action == "sortie":
+                    print(f"DEBUG: Can retour - last action was sortie")
                     return True
         
         # Check current sortie data for this chassis
@@ -3514,6 +3595,7 @@ del "%~f0"
             if (hasattr(product, 'N_CHASSIS') and 
                 product.N_CHASSIS == chassis_number and 
                 isinstance(product, SortieData)):
+                print(f"DEBUG: Found chassis in current sortie session")
                 return True  # Found in current sortie session
         
         # Check in sortie file data for this chassis
@@ -3522,21 +3604,27 @@ del "%~f0"
         
         for sortie_record in self.sortie_file_data:
             if hasattr(sortie_record, 'N_CHASSIS') and sortie_record.N_CHASSIS == chassis_number:
+                print(f"DEBUG: Found chassis in sortie file data: {sortie_record.N_CHASSIS}")
                 chassis_found_in_sortie = True
                 sortie_time = self.parse_datetime(sortie_record.Date, sortie_record.Heure)
                 if latest_sortie_time is None or sortie_time > latest_sortie_time:
                     latest_sortie_time = sortie_time
         
         if not chassis_found_in_sortie:
+            print(f"DEBUG: Chassis not found in any sortie")
             return False  # Not found in any sortie
         
-        # Check if this chassis has a retour after the latest sortie
+        print(f"DEBUG: Chassis found in sortie, latest time: {latest_sortie_time}")
+          # Check if this chassis has a retour after the latest sortie
         for retour_record in self.retour_file_data:
             if hasattr(retour_record, 'N_CHASSIS') and retour_record.N_CHASSIS == chassis_number:
                 retour_time = self.parse_datetime(retour_record.Date, retour_record.Heure)
+                print(f"DEBUG: Found retour for chassis at time: {retour_time}")
                 if retour_time > latest_sortie_time:
+                    print(f"DEBUG: Cannot retour - already returned after latest sortie")
                     return False  # Already returned after latest sortie
         
+        print(f"DEBUG: Can retour - chassis is in sortie and not yet returned")
         return True  # Can retour
     
     def parse_datetime(self, date_str, time_str):
@@ -3561,9 +3649,13 @@ del "%~f0"
             return datetime.now()
     
     def load_retour_file_for_sortie(self):
-        """Load retour Excel file for cross-referencing with sortie data"""
+        """Load retour file data to use as reference when in sortie mode"""
+        if self.data_type != "Sortie":
+            messagebox.showwarning("Warning", "Cette fonction n'est disponible qu'en mode Sortie")
+            return
+            
         filename = filedialog.askopenfilename(
-            title="Charger fichier Retour pour référence",
+            title="Sélectionner un fichier Retour",
             filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
         )
         if filename:
@@ -3572,34 +3664,132 @@ del "%~f0"
                 self.retour_file_data = []
                 
                 # Expected columns for retour data
-                retour_columns = ['Date', 'Heure', 'DESIGNATION', 'N_CHASSIS', 'ID_CLIENT', 'NOM_PRENOM', 'WILAYA']
+                data_columns = ['Date', 'Heure', 'DESIGNATION', 'N_CHASSIS', 'ID_CLIENT', 'NOM_PRENOM', 'WILAYA']
+                title_keyword = "RETOUR"
                 
-                # Load retour data similar to sortie loading logic
-                for _, row in df.iterrows():
-                    # Skip title rows
-                    row_values = [str(val) if pd.notna(val) else "" for val in row.values]
-                    if any("RETOUR" in val.upper() for val in row_values if isinstance(val, str)):
-                        continue
-                    
-                    if all(val == "" or val == "nan" for val in row_values):
-                        continue
-                    
-                    retour_record = RetourData()
-                    for col in retour_columns:
-                        if col in df.columns:
-                            value = row[col]
-                            setattr(retour_record, col, str(value) if pd.notna(value) else "")
-                    self.retour_file_data.append(retour_record)
+                print(f"DEBUG: Loading Retour reference file with {len(df)} rows")
+                print(f"DEBUG: Available columns: {list(df.columns)}")
                 
-                messagebox.showinfo("Succès", f"Fichier retour chargé: {len(self.retour_file_data)} enregistrements")
+                # Première tentative: vérifier si les colonnes sont directement dans le DataFrame
+                found = all(col in df.columns for col in data_columns)
+                
+                if found:
+                    # Colonnes trouvées directement - charger les données avec logique améliorée
+                    loaded_count = 0
+                    for index, row in df.iterrows():
+                        try:
+                            # Vérifier d'abord si nous avons un chassis valide
+                            chassis_val = str(row['N_CHASSIS']) if pd.notna(row['N_CHASSIS']) else ""
+                            
+                            # Skip if no chassis value or if it's too short
+                            if not chassis_val or chassis_val.strip() == "" or chassis_val == "nan":
+                                continue
+                            
+                            if len(chassis_val.strip()) < 3:
+                                continue
+                            
+                            # Skip obvious header/title rows
+                            row_text = " ".join([str(val) for val in row.values if pd.notna(val)]).upper()
+                            if (title_keyword in row_text and "LIVRAISON" in row_text) or "N_CHASSIS" in row_text:
+                                continue
+                            
+                            retour = RetourData()
+                            for col in data_columns:
+                                value = row[col]
+                                setattr(retour, col, str(value) if pd.notna(value) else "")
+                            self.retour_file_data.append(retour)
+                            loaded_count += 1
+                            
+                            if loaded_count <= 3:
+                                print(f"DEBUG: Loaded retour reference record {loaded_count}: Chassis={chassis_val}")
+                                
+                        except Exception as e:
+                            print(f"DEBUG: Error processing retour row {index}: {e}")
+                            continue
+                    
+                    print(f"DEBUG: Successfully loaded {loaded_count} retour reference records")
+                    
+                else:
+                    # Colonnes non trouvées - chercher dans le contenu du fichier
+                    try:
+                        # Lire le fichier ligne par ligne pour trouver l'en-tête des colonnes
+                        raw_df = pd.read_excel(filename, header=None)
+                        header_row_index = None
+                        
+                        # Chercher la ligne qui contient toutes nos colonnes attendues
+                        for index, row in raw_df.iterrows():
+                            row_values = [str(val).strip() if pd.notna(val) else "" for val in row.values]
+                            # Vérifier si cette ligne contient nos colonnes (au moins 4 sur 7)
+                            matches = sum(1 for col in data_columns if col in row_values)
+                            if matches >= 4:  # Au moins 4 colonnes trouvées
+                                header_row_index = index
+                                break
+                        
+                        if header_row_index is not None:
+                            # Relire le fichier avec l'en-tête trouvé
+                            df_with_header = pd.read_excel(filename, header=header_row_index)
+                            # Vérifier que nous avons maintenant les bonnes colonnes
+                            found_columns = [col for col in data_columns if col in df_with_header.columns]
+                            
+                            if len(found_columns) >= 4:  # Au moins 4 colonnes trouvées
+                                loaded_count = 0
+                                for index, row in df_with_header.iterrows():
+                                    try:
+                                        # Vérifier d'abord si nous avons un chassis valide
+                                        chassis_val = ""
+                                        if 'N_CHASSIS' in df_with_header.columns:
+                                            chassis_val = str(row['N_CHASSIS']) if pd.notna(row['N_CHASSIS']) else ""
+                                        
+                                        # Skip if no chassis value or if it's too short
+                                        if not chassis_val or chassis_val.strip() == "" or chassis_val == "nan":
+                                            continue
+                                        
+                                        if len(chassis_val.strip()) < 3:
+                                            continue
+                                        
+                                        # Skip obvious header/title rows
+                                        row_text = " ".join([str(val) for val in row.values if pd.notna(val)]).upper()
+                                        if (title_keyword in row_text and "LIVRAISON" in row_text) or "N_CHASSIS" in row_text:
+                                            continue
+                                        
+                                        retour = RetourData()
+                                        for col in data_columns:
+                                            if col in df_with_header.columns:
+                                                value = row[col]
+                                                setattr(retour, col, str(value) if pd.notna(value) else "")
+                                        self.retour_file_data.append(retour)
+                                        loaded_count += 1
+                                        
+                                        if loaded_count <= 3:
+                                            print(f"DEBUG: Loaded retour reference record {loaded_count}: Chassis={chassis_val}")
+                                            
+                                    except Exception as e:
+                                        print(f"DEBUG: Error processing retour row {index}: {e}")
+                                        continue
+                                
+                                print(f"DEBUG: Successfully loaded {loaded_count} retour reference records from header-found section")
+                            else:
+                                raise ValueError("Colonnes Retour non trouvées dans le fichier de référence")
+                        else:
+                            raise ValueError("En-tête des colonnes Retour non trouvé dans le fichier de référence")
+                            
+                    except Exception as search_error:
+                        print(f"Erreur lors de la recherche des colonnes retour: {search_error}")
+                        messagebox.showerror("Error", f"Impossible de trouver les colonnes Retour dans le fichier: {search_error}")
+                        return                self.update_reference_panel()
+                messagebox.showinfo("Success", f"Fichier retour chargé: {len(self.retour_file_data)} enregistrements de référence")
                 
             except Exception as e:
-                messagebox.showerror("Erreur", f"Impossible de charger le fichier retour: {str(e)}")
+                messagebox.showerror("Error", f"Erreur lors du chargement du fichier retour: {str(e)}")
     
     def load_sortie_file_for_retour(self):
-        """Load sortie Excel file for cross-referencing with retour data"""
+        """Load sortie file data to use as reference when in retour mode"""
+        if self.data_type != "Retour":
+            messagebox.showwarning("Warning", "Cette fonction n'est disponible qu'en mode Retour")
+            return
+            
         filename = filedialog.askopenfilename(
-            title="Charger fichier Sortie pour référence",
+            title="Sélectionner un fichier Sortie",
             filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
         )
         if filename:
@@ -3608,29 +3798,125 @@ del "%~f0"
                 self.sortie_file_data = []
                 
                 # Expected columns for sortie data
-                sortie_columns = ['Date', 'Heure', 'DESIGNATION', 'N_CHASSIS', 'ID_CLIENT', 'NOM_PRENOM', 'WILAYA']
+                data_columns = ['Date', 'Heure', 'DESIGNATION', 'N_CHASSIS', 'ID_CLIENT', 'NOM_PRENOM', 'WILAYA']
+                title_keyword = "SORTIE"
                 
-                # Load sortie data similar to other loading logic
-                for _, row in df.iterrows():
-                    # Skip title rows
-                    row_values = [str(val) if pd.notna(val) else "" for val in row.values]
-                    if any("SORTIE" in val.upper() for val in row_values if isinstance(val, str)):
-                        continue
-                    
-                    if all(val == "" or val == "nan" for val in row_values):
-                        continue
-                    
-                    sortie_record = SortieData()
-                    for col in sortie_columns:
-                        if col in df.columns:
-                            value = row[col]
-                            setattr(sortie_record, col, str(value) if pd.notna(value) else "")
-                    self.sortie_file_data.append(sortie_record)
+                print(f"DEBUG: Loading Sortie reference file with {len(df)} rows")
+                print(f"DEBUG: Available columns: {list(df.columns)}")
                 
-                messagebox.showinfo("Succès", f"Fichier sortie chargé: {len(self.sortie_file_data)} enregistrements")
+                # Première tentative: vérifier si les colonnes sont directement dans le DataFrame
+                found = all(col in df.columns for col in data_columns)
+                
+                if found:
+                    # Colonnes trouvées directement - charger les données avec logique améliorée
+                    loaded_count = 0
+                    for index, row in df.iterrows():
+                        try:
+                            # Vérifier d'abord si nous avons un chassis valide
+                            chassis_val = str(row['N_CHASSIS']) if pd.notna(row['N_CHASSIS']) else ""
+                            
+                            # Skip if no chassis value or if it's too short
+                            if not chassis_val or chassis_val.strip() == "" or chassis_val == "nan":
+                                continue
+                            
+                            if len(chassis_val.strip()) < 3:
+                                continue
+                            
+                            # Skip obvious header/title rows
+                            row_text = " ".join([str(val) for val in row.values if pd.notna(val)]).upper()
+                            if (title_keyword in row_text and "LIVRAISON" in row_text) or "N_CHASSIS" in row_text:
+                                continue
+                            
+                            sortie = SortieData()
+                            for col in data_columns:
+                                value = row[col]
+                                setattr(sortie, col, str(value) if pd.notna(value) else "")
+                            self.sortie_file_data.append(sortie)
+                            loaded_count += 1
+                            
+                            if loaded_count <= 3:
+                                print(f"DEBUG: Loaded sortie reference record {loaded_count}: Chassis={chassis_val}")
+                                
+                        except Exception as e:
+                            print(f"DEBUG: Error processing sortie row {index}: {e}")
+                            continue
+                    
+                    print(f"DEBUG: Successfully loaded {loaded_count} sortie reference records")
+                    
+                else:
+                    # Colonnes non trouvées - chercher dans le contenu du fichier
+                    try:
+                        # Lire le fichier ligne par ligne pour trouver l'en-tête des colonnes
+                        raw_df = pd.read_excel(filename, header=None)
+                        header_row_index = None
+                        
+                        # Chercher la ligne qui contient toutes nos colonnes attendues
+                        for index, row in raw_df.iterrows():
+                            row_values = [str(val).strip() if pd.notna(val) else "" for val in row.values]
+                            # Vérifier si cette ligne contient nos colonnes (au moins 4 sur 7)
+                            matches = sum(1 for col in data_columns if col in row_values)
+                            if matches >= 4:  # Au moins 4 colonnes trouvées
+                                header_row_index = index
+                                break
+                        
+                        if header_row_index is not None:
+                            # Relire le fichier avec l'en-tête trouvé
+                            df_with_header = pd.read_excel(filename, header=header_row_index)
+                            # Vérifier que nous avons maintenant les bonnes colonnes
+                            found_columns = [col for col in data_columns if col in df_with_header.columns]
+                            
+                            if len(found_columns) >= 4:  # Au moins 4 colonnes trouvées
+                                loaded_count = 0
+                                for index, row in df_with_header.iterrows():
+                                    try:
+                                        # Vérifier d'abord si nous avons un chassis valide
+                                        chassis_val = ""
+                                        if 'N_CHASSIS' in df_with_header.columns:
+                                            chassis_val = str(row['N_CHASSIS']) if pd.notna(row['N_CHASSIS']) else ""
+                                        
+                                        # Skip if no chassis value or if it's too short
+                                        if not chassis_val or chassis_val.strip() == "" or chassis_val == "nan":
+                                            continue
+                                        
+                                        if len(chassis_val.strip()) < 3:
+                                            continue
+                                        
+                                        # Skip obvious header/title rows
+                                        row_text = " ".join([str(val) for val in row.values if pd.notna(val)]).upper()
+                                        if (title_keyword in row_text and "LIVRAISON" in row_text) or "N_CHASSIS" in row_text:
+                                            continue
+                                        
+                                        sortie = SortieData()
+                                        for col in data_columns:
+                                            if col in df_with_header.columns:
+                                                value = row[col]
+                                                setattr(sortie, col, str(value) if pd.notna(value) else "")
+                                        self.sortie_file_data.append(sortie)
+                                        loaded_count += 1
+                                        
+                                        if loaded_count <= 3:
+                                            print(f"DEBUG: Loaded sortie reference record {loaded_count}: Chassis={chassis_val}")
+                                            
+                                    except Exception as e:
+                                        print(f"DEBUG: Error processing sortie row {index}: {e}")
+                                        continue
+                                
+                                print(f"DEBUG: Successfully loaded {loaded_count} sortie reference records from header-found section")
+                            else:
+                                raise ValueError("Colonnes Sortie non trouvées dans le fichier de référence")
+                        else:
+                            raise ValueError("En-tête des colonnes Sortie non trouvé dans le fichier de référence")
+                            
+                    except Exception as search_error:
+                        print(f"Erreur lors de la recherche des colonnes sortie: {search_error}")
+                        messagebox.showerror("Error", f"Impossible de trouver les colonnes Sortie dans le fichier: {search_error}")
+                        return
+                
+                self.update_reference_panel()
+                messagebox.showinfo("Success", f"Fichier sortie chargé: {len(self.sortie_file_data)} enregistrements de référence")
                 
             except Exception as e:
-                messagebox.showerror("Erreur", f"Impossible de charger le fichier sortie: {str(e)}")
+                messagebox.showerror("Error", f"Erreur lors du chargement du fichier sortie: {str(e)}")
     
     def update_sortie_retour_history(self, chassis_number, action):
         """Update the sortie/retour history for chronological tracking"""
@@ -3641,6 +3927,423 @@ del "%~f0"
         
         timestamp = datetime.now()
         self.sortie_retour_history[chassis_number].append((timestamp, action))
+
+    def show_reference_panel(self):
+        """Show a panel displaying loaded reference data (sortie/retour files)"""
+        # Check if we have any reference data to show
+        if not self.sortie_file_data and not self.retour_file_data:
+            return
+        
+        # Create or update reference panel
+        if not hasattr(self, 'reference_panel') or not self.reference_panel.winfo_exists():
+            self.create_reference_panel()
+        
+        # Update the reference panel content
+        self.update_reference_panel()
+    
+    def create_reference_panel(self):
+        """Create the reference panel UI"""
+        # Create a new window for the reference panel
+        self.reference_panel = tk.Toplevel(self.root)
+        self.reference_panel.title("Fichiers de Référence Chargés")
+        self.reference_panel.geometry("800x600")
+        self.reference_panel.transient(self.root)
+        
+        # Position it to the right of the main window
+        main_x = self.root.winfo_x()
+        main_width = self.root.winfo_width()
+        self.reference_panel.geometry(f"+{main_x + main_width + 10}+{self.root.winfo_y()}")
+        
+        # Main frame
+        main_frame = ttk.Frame(self.reference_panel, padding="10")
+        main_frame.pack(fill='both', expand=True)
+        
+        # Title
+        ttk.Label(main_frame, text="Fichiers de Référence", 
+                 font=('Arial', 14, 'bold')).pack(pady=(0, 10))
+        
+        # Notebook for tabs
+        self.ref_notebook = ttk.Notebook(main_frame)
+        self.ref_notebook.pack(fill='both', expand=True)
+        
+        # Close button
+        close_frame = ttk.Frame(main_frame)
+        close_frame.pack(pady=(10, 0))
+        ttk.Button(close_frame, text="Fermer", 
+                  command=self.reference_panel.destroy).pack()
+    
+    def update_reference_panel(self):
+        """Update the content of the reference panel"""
+        if not hasattr(self, 'ref_notebook'):
+            return
+        
+        # Clear existing tabs
+        for tab in self.ref_notebook.tabs():
+            self.ref_notebook.forget(tab)
+        
+        # Add Sortie tab if we have sortie data
+        if self.sortie_file_data:
+            self.create_reference_tab("Sorties", self.sortie_file_data, SortieData)
+        
+        # Add Retour tab if we have retour data
+        if self.retour_file_data:
+            self.create_reference_tab("Retours", self.retour_file_data, RetourData)
+    
+    def create_reference_tab(self, tab_name, data_list, data_class):
+        """Create a tab in the reference panel for a specific data type"""
+        # Create tab frame
+        tab_frame = ttk.Frame(self.ref_notebook)
+        self.ref_notebook.add(tab_frame, text=f"{tab_name} ({len(data_list)})")
+        
+        # Search frame
+        search_frame = ttk.Frame(tab_frame)
+        search_frame.pack(fill='x', padx=5, pady=5)
+        
+        ttk.Label(search_frame, text="Rechercher N° Châssis:").pack(side='left')
+        search_var = tk.StringVar()
+        search_entry = ttk.Entry(search_frame, textvariable=search_var, width=20)
+        search_entry.pack(side='left', padx=(5, 0))
+        
+        # Treeview for data
+        tree_frame = ttk.Frame(tab_frame)
+        tree_frame.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        # Define columns based on data type
+        if data_class == SortieData or data_class == RetourData:
+            columns = ('Date', 'Heure', 'DESIGNATION', 'N_CHASSIS', 'ID_CLIENT', 'NOM_PRENOM', 'WILAYA')
+        else:
+            columns = ('Reference', 'Fournisseur', 'Designation', 'Num_Chasse', 'Couleur', 'Lot', 'Magasin', 'Relation')
+        
+        tree = ttk.Treeview(tree_frame, columns=columns, show='headings', height=15)
+        
+        # Configure columns
+        for col in columns:
+            tree.heading(col, text=col.replace('_', ' '))
+            if col in ['Date', 'Heure', 'ID_CLIENT']:
+                tree.column(col, width=100, minwidth=80)
+            elif col == 'N_CHASSIS':
+                tree.column(col, width=120, minwidth=100)
+            else:
+                tree.column(col, width=130, minwidth=100)
+        
+        # Scrollbars
+        v_scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+        h_scrollbar = ttk.Scrollbar(tree_frame, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+        
+        # Grid layout
+        tree.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        v_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        h_scrollbar.grid(row=1, column=0, sticky=(tk.W, tk.E))
+        
+        tree_frame.columnconfigure(0, weight=1)
+        tree_frame.rowconfigure(0, weight=1)
+        
+        # Function to update tree with search
+        def update_tree():
+            # Clear existing items
+            for item in tree.get_children():
+                tree.delete(item)
+            
+            search_text = search_var.get().lower()
+            
+            # Add filtered data
+            for record in data_list:
+                # Check if search matches N_CHASSIS
+                chassis_val = getattr(record, 'N_CHASSIS', '') or getattr(record, 'Num_Chasse', '')
+                if search_text and search_text not in chassis_val.lower():
+                    continue
+                
+                # Get values for this record
+                if data_class == SortieData or data_class == RetourData:
+                    values = (
+                        getattr(record, 'Date', ''),
+                        getattr(record, 'Heure', ''),
+                        getattr(record, 'DESIGNATION', ''),
+                        getattr(record, 'N_CHASSIS', ''),
+                        getattr(record, 'ID_CLIENT', ''),
+                        getattr(record, 'NOM_PRENOM', ''),
+                        getattr(record, 'WILAYA', '')
+                    )
+                else:
+                    values = (
+                        getattr(record, 'Reference', ''),
+                        getattr(record, 'Fournisseur', ''),
+                        getattr(record, 'Designation', ''),
+                        getattr(record, 'Num_Chasse', ''),
+                        getattr(record, 'Couleur', ''),
+                        getattr(record, 'Lot', ''),
+                        getattr(record, 'Magasin', ''),
+                        getattr(record, 'Relation', '')
+                    )
+                
+                tree.insert('', 'end', values=values)
+        
+        # Bind search
+        search_var.trace('w', lambda *args: update_tree())
+        
+        # Initial population
+        update_tree()
+        
+        # Focus on search entry
+        search_entry.focus_set()
+    
+    def hide_reference_panel(self):
+        """Hide the reference panel"""
+        if hasattr(self, 'reference_panel') and self.reference_panel.winfo_exists():
+            self.reference_panel.destroy()
+
+    def show_multiple_qr_codes(self, products_data):
+        """Display multiple QR codes in a grid layout in a new window"""
+        # Create QR codes window
+        qr_window = tk.Toplevel(self.root)
+        qr_window.title(f"Codes QR - {len(products_data)} éléments sélectionnés")
+        qr_window.geometry("1200x800")
+        qr_window.resizable(True, True)
+        
+        # Create main frame with scrollable canvas
+        main_frame = ttk.Frame(qr_window)
+        main_frame.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Create canvas and scrollbar for scrollable content
+        canvas = tk.Canvas(main_frame)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Pack canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+          # Generate QR codes and create grid
+        qr_images = []
+        qr_size = 200  # Smaller size for grid display
+        
+        for product_data in products_data:
+            try:
+                qr_data = self.generate_qr_data(product_data)
+                
+                # Create QR code with same quality as show_qr_code
+                qr = qrcode.QRCode(
+                    version=1,
+                    error_correction=qrcode.constants.ERROR_CORRECT_H,  # High error correction for logo
+                    box_size=10,  # Same as show_qr_code
+                    border=4,     # Same as show_qr_code
+                )
+                qr.add_data(qr_data)
+                qr.make(fit=True)
+                
+                # Get the QR code matrix and create image with same parameters as show_qr_code
+                qr_matrix = qr.get_matrix()
+                qr_image = self.create_rounded_qr_image(qr_matrix, box_size=10, border=4)  # Same as show_qr_code
+                  # Try to add logo if available
+                try:
+                    logo_path = os.path.join(os.path.dirname(__file__), 'logo_diardzair.jpg')
+                    if os.path.exists(logo_path):
+                        logo = Image.open(logo_path)
+                        
+                        # Convert logo if needed
+                        if logo.mode in ('P', 'PA'):
+                            logo = logo.convert('RGBA')
+                        elif logo.mode != 'RGBA' and 'transparency' in logo.info:
+                            logo = logo.convert('RGBA')
+                        
+                        # Calculate logo size (smaller for grid)
+                        qr_width, qr_height = qr_image.size
+                        logo_size = min(qr_width, qr_height) // 5
+                        
+                        # Resize logo
+                        logo.thumbnail((logo_size, logo_size), Image.Resampling.LANCZOS)
+                        
+                        # Create white background for logo
+                        logo_bg_size = logo_size + 10
+                        logo_bg = Image.new('RGB', (logo_bg_size, logo_bg_size), 'white')
+                        
+                        # Center logo on background
+                        logo_x = (logo_bg_size - logo.size[0]) // 2
+                        logo_y = (logo_bg_size - logo.size[1]) // 2
+                        
+                        if logo.mode == 'RGBA':
+                            logo_bg.paste(logo, (logo_x, logo_y), logo)
+                        else:
+                            if logo.mode != 'RGB':
+                                logo = logo.convert('RGB')
+                            logo_bg.paste(logo, (logo_x, logo_y))
+                        
+                        # Center logo on QR code
+                        pos_x = (qr_width - logo_bg_size) // 2
+                        pos_y = (qr_height - logo_bg_size) // 2
+                        qr_image.paste(logo_bg, (pos_x, pos_y))
+                        
+                except Exception as e:
+                    print(f"Warning: Could not add logo to QR code: {e}")
+                
+                # Resize to standard grid size
+                # qr_image = qr_image.resize((qr_size, qr_size), Image.Resampling.LANCZOS)
+                qr_images.append((qr_image, product_data))
+                
+            except Exception as e:
+                print(f"Error generating QR code for product: {e}")
+                continue
+        
+        # Calculate grid dimensions (3 columns max)
+        columns = min(3, len(qr_images))
+        rows = (len(qr_images) + columns - 1) // columns
+        
+        # Create grid of QR codes
+        for i, (qr_image, product_data) in enumerate(qr_images):
+            row = i // columns
+            col = i % columns
+            
+            # Create frame for each QR code
+            qr_frame = ttk.LabelFrame(scrollable_frame, padding="10")
+            qr_frame.grid(row=row, column=col, padx=10, pady=10, sticky=(tk.W, tk.E, tk.N, tk.S))
+            
+            # Convert PIL image to PhotoImage
+            photo = ImageTk.PhotoImage(qr_image)
+            
+            # QR Code display
+            qr_label = ttk.Label(qr_frame, image=photo)
+            qr_label.image = photo  # Keep a reference
+            qr_label.pack(pady=(0, 10))
+            
+            # Product information
+            if isinstance(product_data, ProductData):
+                info_text = f"Réf: {product_data.Reference}\nDésignation: {product_data.Designation[:20]}..."
+            elif isinstance(product_data, (SortieData, RetourData)):
+                type_label = "Sortie" if isinstance(product_data, SortieData) else "Retour"
+                info_text = f"{type_label}: {product_data.N_CHASSIS}\nClient: {product_data.NOM_PRENOM[:15]}..."
+            else:
+                info_text = "Information non disponible"
+            
+            info_label = ttk.Label(qr_frame, text=info_text, font=('Arial', 8), justify=tk.CENTER)
+            info_label.pack()
+              # Individual buttons for each QR code (only print button for multiple view)
+            button_frame = ttk.Frame(qr_frame)
+            button_frame.pack(pady=(5, 0))
+            
+            # Print individual QR
+            def print_individual_qr(img=qr_image, prod=product_data):
+                self.print_qr_code(img, prod)
+            
+            ttk.Button(button_frame, text="Imprimer", 
+                      command=print_individual_qr).pack(side=tk.LEFT, padx=2)
+        
+        # Configure grid weights
+        for col in range(columns):
+            scrollable_frame.columnconfigure(col, weight=1)
+        
+        # Global buttons frame (fixed at bottom of window)
+        global_button_frame = ttk.Frame(qr_window)
+        global_button_frame.pack(side='bottom', pady=10)
+        
+        # Save all QR codes
+        def save_all_qr_codes():
+            folder = filedialog.askdirectory(title="Sélectionner le dossier pour sauvegarder tous les codes QR")
+            if folder:
+                saved_count = 0
+                for i, (qr_image, product_data) in enumerate(qr_images):
+                    try:
+                        if isinstance(product_data, ProductData):
+                            filename = f"QR_{product_data.Reference}.png"
+                        elif isinstance(product_data, (SortieData, RetourData)):
+                            type_prefix = "Sortie" if isinstance(product_data, SortieData) else "Retour"
+                            filename = f"QR_{type_prefix}_{product_data.N_CHASSIS}.png"
+                        else:
+                            filename = f"QR_code_{i+1}.png"
+                        
+                        filepath = os.path.join(folder, filename)
+                        qr_image.save(filepath)
+                        saved_count += 1
+                    except Exception as e:
+                        print(f"Error saving QR code {i+1}: {e}")
+                
+                messagebox.showinfo("Sauvegarde Terminée", 
+                                  f"{saved_count} codes QR sauvegardés dans:\n{folder}")
+          # Print all QR codes
+        def print_all_qr_codes():
+            result = messagebox.askyesno("Impression Multiple", 
+                                       f"Voulez-vous imprimer tous les {len(qr_images)} codes QR?\n"
+                                       f"Cela peut prendre du temps.")
+            if result:
+                printed_count = 0
+                failed_count = 0
+                
+                for qr_image, product_data in qr_images:
+                    try:
+                        # Print without showing individual success messages
+                        self.print_qr_code(qr_image, product_data, show_success_message=False)
+                        printed_count += 1
+                    except Exception as e:
+                        print(f"Error printing QR code: {e}")
+                        failed_count += 1
+                
+                # Show single success message after all prints are sent
+                if failed_count == 0:
+                    messagebox.showinfo("Impression Terminée", 
+                                      f"Tous les {printed_count} codes QR ont été envoyés à l'imprimante avec succès!")
+                else:
+                    messagebox.showwarning("Impression Terminée", 
+                                         f"{printed_count} codes QR envoyés à l'imprimante.\n"
+                                         f"{failed_count} codes QR ont échoué.")
+          # Create composite image for all QR codes
+        def create_composite_image():
+            try:
+                # Calculate composite image size
+                margin = 20
+                qr_with_margin = qr_size + margin
+                
+                composite_width = columns * qr_with_margin
+                composite_height = rows * qr_with_margin
+                
+                # Create composite image
+                composite = Image.new('RGB', (composite_width, composite_height), 'white')
+                
+                for i, (qr_image, product_data) in enumerate(qr_images):
+                    row = i // columns
+                    col = i % columns
+                    
+                    x = col * qr_with_margin + margin // 2
+                    y = row * qr_with_margin + margin // 2
+                    
+                    composite.paste(qr_image, (x, y))
+                
+                # Save composite
+                filename = filedialog.asksaveasfilename(
+                    defaultextension=".png",
+                    filetypes=[("PNG files", "*.png"), ("All files", "*.*")],
+                    initialname=f"QR_Composite_{len(qr_images)}_codes.png"
+                )
+                if filename:
+                    composite.save(filename)
+                    messagebox.showinfo("Sauvegardé", f"Image composite sauvegardée: {os.path.basename(filename)}")
+                    
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Erreur lors de la création de l'image composite: {str(e)}")
+        
+        ttk.Button(global_button_frame, text="Sauver Tous", 
+                  command=save_all_qr_codes).pack(side=tk.LEFT, padx=5)
+        ttk.Button(global_button_frame, text="Imprimer Tous", 
+                  command=print_all_qr_codes).pack(side=tk.LEFT, padx=5)
+        ttk.Button(global_button_frame, text="Image Composite", 
+                  command=create_composite_image).pack(side=tk.LEFT, padx=5)
+        ttk.Button(global_button_frame, text="Fermer", 
+                  command=qr_window.destroy).pack(side=tk.LEFT, padx=5)
+        
+        # Enable mouse wheel scrolling
+        def on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        
+        canvas.bind("<MouseWheel>", on_mousewheel)
+        
+        # Focus on window
+        qr_window.focus_set()
 
 def main():
     """Main function to run the application"""
