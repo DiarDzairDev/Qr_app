@@ -1,0 +1,7 @@
+create a new app that uses the same app ideology this app will scan the same qr codes and produces this excel file it has columns DATE ID DESGNATION REFERENCE QTE BOUTON
+Date is today
+ID when scanning from a qr code fetches the client ID exactly as the qr_scanner app
+DESIGNATION and REFERENCE are the same as in qr_scanner
+QTE is 1 by default
+and button is a checkbox to say if it's Prepared or not yet
+add the possibility to add entries manually
