@@ -30,7 +30,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- Configuration for Updater ---
 # 1. Define the current version of the running application
-CURRENT_VERSION = "1.1.8" 
+CURRENT_VERSION = "1.1.9" 
 # 2. GitHub Releases API URLs
 GITHUB_RELEASES_API_URL = "https://api.github.com/repos/DiarDzairDev/Qr_app/releases/latest"
 GITHUB_LATEST_DOWNLOAD_URL = "https://github.com/DiarDzairDev/Qr_app/releases/latest/download/Mouvement.Stock.zip"
@@ -1212,13 +1212,14 @@ CUKI I 06/2025"""
         
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
-        
-        # Pack canvas and scrollbar
+          # Pack canvas and scrollbar
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
         
-        # Convert PIL image to PhotoImage
-        photo = ImageTk.PhotoImage(qr_image)
+        # Convert PIL image to PhotoImage (after adding chassis number)
+        # First, add chassis number under the QR code
+        final_image = self._add_chassis_number_to_qr(qr_image, product_data)
+        photo = ImageTk.PhotoImage(final_image)
         
         # QR Code display in scrollable frame
         qr_label = ttk.Label(scrollable_frame, image=photo)
@@ -1266,20 +1267,18 @@ CUKI I 06/2025"""
         # Buttons frame (fixed at bottom of window)
         button_frame = ttk.Frame(qr_window)
         button_frame.pack(side='bottom', pady=10)
-        
-        # Save button
+          # Save button
         def save_qr():
             filename = filedialog.asksaveasfilename(
                 defaultextension=".png",
                 filetypes=[("PNG files", "*.png"), ("All files", "*.*")]
             )
             if filename:
-                qr_image.save(filename)
+                final_image.save(filename)
                 messagebox.showinfo("Saved", f"QR code saved as {filename}")
-        
-        # Print button
+          # Print button
         def print_qr():
-            self.print_qr_code(qr_image, product_data)
+            self.print_qr_code(final_image, product_data)
         
         ttk.Button(button_frame, text="Save QR Code", command=save_qr).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Print QR Code", command=print_qr).pack(side=tk.LEFT, padx=5)
@@ -1827,12 +1826,20 @@ CUKI I 06/2025"""
             )
         
         result = messagebox.askyesno("Confirmation", confirm_message, icon='warning')
-        
         if result:
             # Find the index in products_data
             index = self.find_product_index_by_values(values)
             if index is not None:
+                # Get the product data before deletion for history cleanup
+                product_to_delete = self.products_data[index]
+                
+                # Remove from products_data
                 del self.products_data[index]
+                
+                # Clean up sortie/retour history if applicable
+                if self.data_type in ["Sortie", "Retour"] and hasattr(product_to_delete, 'N_CHASSIS'):
+                    self.remove_from_sortie_retour_history(product_to_delete.N_CHASSIS, self.data_type.lower())
+                
                 self.update_tree_display()
                 messagebox.showinfo("Succès", f"{self.data_type} supprimé avec succès")
             else:                messagebox.showerror("Erreur", f"Impossible de trouver l'{self.data_type.lower()} à supprimer")
@@ -2525,68 +2532,71 @@ CUKI I 06/2025"""
 
     def run(self):
         """Start the application"""
-        self.root.mainloop()    
+        self.root.mainloop()      
     def fetch_client_info_from_chassis(self, num_chassis):
         """Fetch client information from chassis number using external APIs"""
         try:
-            # Step 1: Get vehicle details and client_id from first API
+            # Step 1: Get vehicle details from new API
             print(f"Fetching vehicle details for chassis: {num_chassis}")
             
-            vehicle_api_url = "https://diardzairstocks.store/api/lot/getDetailByNumChassis"
-            vehicle_payload = {
-                "username": "diardzair",
-                "password": "asali",
-                "num": num_chassis
+            # Use the new API endpoint with pagination and chassis filter
+            vehicle_api_url = f"https://app.diardzair.com.dz/api/commandes/?page=1&perPage=10&chassis_number={num_chassis}"
+            headers = {
+                "Authorization": "Bearer f8peRksDOtpBRE6UAoJhC6kP3gPg5JOUJVsi9fhsJCn8sBgjE6C/2rUo3PEYCmYG"
             }
             
             # Make first API call
-            vehicle_response = requests.post(vehicle_api_url, json=vehicle_payload, timeout=10)
+            vehicle_response = requests.get(vehicle_api_url, headers=headers, timeout=10)
             vehicle_response.raise_for_status()
             
             vehicle_data = vehicle_response.json()
-            print(f"Vehicle API response status: {vehicle_data.get('status', 'unknown')}")
+            print(f"Vehicle API response error: {vehicle_data.get('error', 'unknown')}")
             
-            if vehicle_data.get('status') != 200:
-                # Check if it's a "not found" or "not reserved" case
-                if vehicle_data.get('status') == 404 or 'not found' in str(vehicle_data).lower():
-                    raise Exception("MOTO_NOT_RESERVED")
-                else:
-                    raise Exception(f"Vehicle API returned status: {vehicle_data.get('status', 'unknown')}")
+            if vehicle_data.get('error', True):
+                raise Exception("MOTO_NOT_RESERVED")
             
-            # Extract client_id from vehicle data
-            vehicule_info = vehicle_data.get('vehicule', {})
-            client_id = vehicule_info.get('client_id')
+            # Check if any data was returned
+            data_list = vehicle_data.get('data', [])
+            if not data_list or len(data_list) == 0:
+                raise Exception("MOTO_NOT_RESERVED")
+            
+            # Get the first match (should be the exact chassis match)
+            vehicle_info = data_list[0]
+            client_id = vehicle_info.get('id')  # The client ID is in the 'id' field
             
             if not client_id:
-                # No client_id means the moto is not reserved
                 raise Exception("MOTO_NOT_RESERVED")
                 
             print(f"Found client_id: {client_id}")
             
-            # Step 2: Get client details from second API
+            # Extract basic client info from first API response
+            nom = vehicle_info.get('nom', '')
+            prenom = vehicle_info.get('prenom', '')
+            nom_prenom = f"{nom} {prenom}".strip()
+            
+            # Step 2: Get wilaya details from second API
             client_api_url = f"https://albaraka.fun/api/orders/info/{client_id}"
-            headers = {
+            client_headers = {
                 "Authorization": "Bearer U3wXgPLvreiyv5JRJsxVU4Tlbyakt7MLFzTjWq8DaPjLbGXgbMELK5xsMRqvHcOtc0H2obwVK4OGqJbfsgIo2hgakbxi5Sk4mWRKv1IOYr42qtOiDiyd3f8fexCLe9m"
             }
             
             # Make second API call
-            client_response = requests.get(client_api_url, headers=headers, timeout=10)
+            client_response = requests.get(client_api_url, headers=client_headers, timeout=10)
             client_response.raise_for_status()
             
             client_data = client_response.json()
             print(f"Client API response error: {client_data.get('error', 'unknown')}")
             
-            if client_data.get('error', True):
-                raise Exception("Client API returned error - client information not found")
+            # Extract wilaya from second API, fallback to empty if not available
+            wilaya = ""
+            if not client_data.get('error', True):
+                client_info = client_data.get('data', {})
+                wilaya = client_info.get('wilaya', '')
             
-            # Extract client information
-            client_info = client_data.get('data', {})
-            nom = client_info.get('nom', '')
-            prenom = client_info.get('prenom', '')
-            wilaya = client_info.get('wilaya', '')
-            
-            # Create full name
-            nom_prenom = f"{nom} {prenom}".strip()
+            # If no wilaya found from second API, use empty string
+            if not wilaya:
+                print("No wilaya found from second API, using empty string")
+                wilaya = ""
             
             # Create client object compatible with existing system
             api_client = {
@@ -2685,7 +2695,6 @@ CUKI I 06/2025"""
         # Wait for dialog to close
         dialog.wait_window()
         return selected_client
-    
     def fetch_clients_from_api_with_pagination(self, client_id="", nom="", prenom="", page=1, per_page=200):
         """Fetch clients from the API with search parameters and pagination info"""
         try:
@@ -2696,7 +2705,7 @@ CUKI I 06/2025"""
                 "page": page,
                 "perPage": per_page
             }
-            headers={
+            headers = {
                 "Authorization": "Bearer f8peRksDOtpBRE6UAoJhC6kP3gPg5JOUJVsi9fhsJCn8sBgjE6C/2rUo3PEYCmYG"
             }
             # Add search parameters if provided
@@ -2794,7 +2803,6 @@ CUKI I 06/2025"""
                 params["nom"] = nom
             if prenom:
                 params["prenom"] = prenom
-            
             print(f"Fetching clients from API with params: {params}")
             headers={
                 "Authorization": "Bearer f8peRksDOtpBRE6UAoJhC6kP3gPg5JOUJVsi9fhsJCn8sBgjE6C/2rUo3PEYCmYG"
@@ -3490,25 +3498,33 @@ CUKI I 06/2025"""
                 f"Développé par :\n"
                 f"DairDzair E-Commerce & INNOVATION\n\n"
                 f"© 2024-2025 DairDzair E-Commerce & INNOVATION"
-            )
-
+            )    
     def can_sortie_chassis(self, chassis_number):
         """Check if a chassis can be sortie (not already in sortie without return)"""
         from datetime import datetime
         
+        print(f"DEBUG: can_sortie_chassis called for {chassis_number}")
+        print(f"DEBUG: sortie_retour_history keys: {list(self.sortie_retour_history.keys())}")
+        print(f"DEBUG: sortie_file_data count: {len(self.sortie_file_data)}")
+        print(f"DEBUG: retour_file_data count: {len(self.retour_file_data)}")
+        print(f"DEBUG: products_data count: {len(self.products_data)}")
+        
         # Check in sortie_retour_history for this chassis
         if chassis_number in self.sortie_retour_history:
             history = self.sortie_retour_history[chassis_number]
+            print(f"DEBUG: Found history for {chassis_number}: {history}")
             # Get the last action for this chassis
             if history:
                 last_timestamp, last_action = history[-1]
+                print(f"DEBUG: Last action was: {last_action}")
                 # If last action was sortie, cannot sortie again
                 if last_action == "sortie":
-                    return False
-        
+                    print(f"DEBUG: Returning False - last action was sortie")
+                    return False        
         # Check in retour file data to see if this chassis has been returned
         for retour_record in self.retour_file_data:
             if hasattr(retour_record, 'N_CHASSIS') and retour_record.N_CHASSIS == chassis_number:
+                print(f"DEBUG: Found retour record for {chassis_number}")
                 # Check if there's a corresponding sortie after this retour
                 retour_time = self.parse_datetime(retour_record.Date, retour_record.Heure)
                 
@@ -3519,10 +3535,10 @@ CUKI I 06/2025"""
                         sortie_time = self.parse_datetime(sortie_record.Date, sortie_record.Heure)
                         if sortie_time > retour_time:
                             sortie_after_retour = True
-                            break
-                
+                            break                
                 if not sortie_after_retour:
                     # No sortie after this retour, so chassis is available
+                    print(f"DEBUG: Returning True - no sortie after retour")
                     return True
         
         # Check current sortie data for this chassis
@@ -3530,11 +3546,13 @@ CUKI I 06/2025"""
             if (hasattr(product, 'N_CHASSIS') and 
                 product.N_CHASSIS == chassis_number and 
                 isinstance(product, SortieData)):
+                print(f"DEBUG: Returning False - already in current sortie session")
                 return False  # Already in current sortie session
         
         # Check in sortie file data without corresponding retour
         for sortie_record in self.sortie_file_data:
             if hasattr(sortie_record, 'N_CHASSIS') and sortie_record.N_CHASSIS == chassis_number:
+                print(f"DEBUG: Found sortie record for {chassis_number}")
                 # Check if this sortie has a corresponding retour
                 sortie_time = self.parse_datetime(sortie_record.Date, sortie_record.Heure)
                 
@@ -3547,8 +3565,10 @@ CUKI I 06/2025"""
                             break
                 
                 if not retour_found:
+                    print(f"DEBUG: Returning False - sortie without retour")
                     return False  # Sortie without retour
         
+        print(f"DEBUG: Returning True - can sortie")
         return True  # Can sortie
     def can_retour_chassis(self, chassis_number):
         """Check if a chassis can be retour (must be in sortie and not already returned)"""
@@ -3912,6 +3932,24 @@ CUKI I 06/2025"""
         timestamp = datetime.now()
         self.sortie_retour_history[chassis_number].append((timestamp, action))
 
+    def remove_from_sortie_retour_history(self, chassis_number, action):
+        """Remove the most recent action from sortie/retour history when an item is deleted"""
+        if chassis_number in self.sortie_retour_history:
+            history = self.sortie_retour_history[chassis_number]
+            if history:
+                # Find and remove the most recent entry with the matching action
+                for i in range(len(history) - 1, -1, -1):
+                    timestamp, hist_action = history[i]
+                    if hist_action == action:
+                        del history[i]
+                        print(f"DEBUG: Removed {action} action for chassis {chassis_number} from history")
+                        break
+                
+                # If no history remains for this chassis, remove the key
+                if not history:
+                    del self.sortie_retour_history[chassis_number]
+                    print(f"DEBUG: Removed chassis {chassis_number} from history completely")
+
     def show_reference_panel(self):
         """Show a panel displaying loaded reference data (sortie/retour files)"""
         # Check if we have any reference data to show
@@ -4165,12 +4203,14 @@ CUKI I 06/2025"""
                         pos_y = (qr_height - logo_bg_size) // 2
                         qr_image.paste(logo_bg, (pos_x, pos_y))
                         
-                except Exception as e:
-                    print(f"Warning: Could not add logo to QR code: {e}")
+                except Exception as e:                print(f"Warning: Could not add logo to QR code: {e}")
+                
+                # Add chassis number to QR code
+                final_qr_image = self._add_chassis_number_to_qr(qr_image, product_data)
                 
                 # Resize to standard grid size
                 # qr_image = qr_image.resize((qr_size, qr_size), Image.Resampling.LANCZOS)
-                qr_images.append((qr_image, product_data))
+                qr_images.append((final_qr_image, product_data))
                 
             except Exception as e:
                 print(f"Error generating QR code for product: {e}")
@@ -4325,9 +4365,65 @@ CUKI I 06/2025"""
             canvas.yview_scroll(int(-1*(event.delta/120)), "units")
         
         canvas.bind("<MouseWheel>", on_mousewheel)
-        
-        # Focus on window
+          # Focus on window
         qr_window.focus_set()
+
+    def _add_chassis_number_to_qr(self, qr_image, product_data):
+        """Add chassis number text under the QR code with asterisks"""
+        from PIL import ImageDraw, ImageFont
+        
+        # Get chassis number based on data type
+        chassis_number = ""
+        if isinstance(product_data, ProductData):
+            chassis_number = getattr(product_data, 'Num_Chasse', '')
+        elif isinstance(product_data, (SortieData, RetourData)):
+            chassis_number = getattr(product_data, 'N_CHASSIS', '')
+        
+        if not chassis_number:
+            return qr_image  # Return original if no chassis number
+            
+        # Format chassis number with asterisks
+        chassis_text = f"*{chassis_number}*"
+        
+        # Calculate new image size - increased space for larger font
+        qr_width, qr_height = qr_image.size
+        text_height = 100  # Increased space for larger text
+        new_height = qr_height + text_height
+        
+        # Create new image with extra space for text
+        new_image = Image.new('RGB', (qr_width, new_height), 'white')
+        
+        # Paste QR code at the top
+        new_image.paste(qr_image, (0, 0))
+        
+        # Draw text at the bottom
+        draw = ImageDraw.Draw(new_image)
+        
+        # Try to use a bold system font with quadrupled size (36 instead of 16)
+        try:
+            font = ImageFont.truetype("arialbd.ttf", 36)  # Arial Bold
+        except:
+            try:
+                font = ImageFont.truetype("arial.ttf", 36)  # Arial regular if bold not available
+            except:
+                try:
+                    font = ImageFont.truetype("DejaVuSans-Bold.ttf", 36)  # DejaVu Sans Bold
+                except:
+                    try:
+                        font = ImageFont.truetype("DejaVuSans.ttf", 36)  # DejaVu Sans regular
+                    except:
+                        font = ImageFont.load_default()
+        
+        # Get text dimensions for centering
+        bbox = draw.textbbox((0, 0), chassis_text, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_x = (qr_width - text_width) // 2
+        text_y = qr_height + 20  # 20 pixels below QR code for better spacing
+        
+        # Draw the text in bold black
+        draw.text((text_x, text_y), chassis_text, fill='black', font=font)
+        
+        return new_image
 
 def main():
     """Main function to run the application"""
