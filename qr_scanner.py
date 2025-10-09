@@ -30,7 +30,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- Configuration for Updater ---
 # 1. Define the current version of the running application
-CURRENT_VERSION = "1.1.6" 
+CURRENT_VERSION = "1.1.8" 
 # 2. GitHub Releases API URLs
 GITHUB_RELEASES_API_URL = "https://api.github.com/repos/DiarDzairDev/Qr_app/releases/latest"
 GITHUB_LATEST_DOWNLOAD_URL = "https://github.com/DiarDzairDev/Qr_app/releases/latest/download/Mouvement.Stock.zip"
