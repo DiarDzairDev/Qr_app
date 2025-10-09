@@ -35,9 +35,14 @@ CURRENT_VERSION = "1.1.4"
 #    IMPORTANT: Replace this with the actual URL to a plain text file containing ONLY the latest version number (e.g., "1.0.1")
 REMOTE_VERSION_URL = "https://raw.githubusercontent.com/DiarDzairDev/Qr_app/refs/heads/main/version.txt" # Placeholder URL
 
-REMOTE_PACKAGE_URL = "https://github.com/DiarDzairDev/Qr_app/raw/refs/heads/main/dist/qr_scanner.zip"
+# 3. Base URL pattern for releases (version will be inserted dynamically)
+REMOTE_PACKAGE_URL_TEMPLATE = "https://github.com/DiarDzairDev/Qr_app/releases/download/{version}/Mouvement.Stock.zip"
 LOCAL_PACKAGE_FILENAME = "qr_scanner_update.zip"
 LOCAL_EXE_FILENAME = "qr_scanner.exe"
+
+def get_remote_package_url(version):
+    """Generate the download URL for a specific version"""
+    return REMOTE_PACKAGE_URL_TEMPLATE.format(version=version)
 
 # --- Logging Configuration ---
 def setup_logging():
@@ -2279,9 +2284,12 @@ CUKI I 06/2025"""
             
             # Start download in a new thread
             threading.Thread(target=self._download_and_install, daemon=True).start()    
+    
     def _download_and_install(self):
         """Downloads the new application package (ZIP) and extracts it with progress."""
-        print(f"Downloading new package from: {REMOTE_PACKAGE_URL}")
+        # Generate the download URL using the latest version
+        remote_package_url = get_remote_package_url(self.remote_version)
+        print(f"Downloading new package from: {remote_package_url}")
         
         # 1. Determine the path to save the new package
         if getattr(sys, 'frozen', False):
@@ -2292,12 +2300,12 @@ CUKI I 06/2025"""
         package_path = os.path.join(install_dir, LOCAL_PACKAGE_FILENAME)
         
         try:
-            print(f"Starting download from: {REMOTE_PACKAGE_URL}")
+            print(f"Starting download from: {remote_package_url}")
             print(f"Saving to: {package_path}")
             
             # 2. Download the ZIP file chunk by chunk (streaming)
             print("Initiating HTTP request...")
-            response = requests.get(REMOTE_PACKAGE_URL, stream=True, timeout=300)
+            response = requests.get(remote_package_url, stream=True, timeout=300)
             response.raise_for_status()
             print(f"HTTP request successful, status code: {response.status_code}")
 
