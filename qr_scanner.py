@@ -30,7 +30,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- Configuration for Updater ---
 # 1. Define the current version of the running application
-CURRENT_VERSION = "1.1.3" 
+CURRENT_VERSION = "1.1.4" 
 # 2. Define the URL where the latest version number is stored (e.g., a raw file on GitHub)
 #    IMPORTANT: Replace this with the actual URL to a plain text file containing ONLY the latest version number (e.g., "1.0.1")
 REMOTE_VERSION_URL = "https://raw.githubusercontent.com/DiarDzairDev/Qr_app/refs/heads/main/version.txt" # Placeholder URL
@@ -72,7 +72,7 @@ def setup_logging():
     builtins.print = log_print
     
     logging.info("=" * 50)
-    logging.info(f"QR Scanner Application Started - Version {CURRENT_VERSION}")
+    logging.info(f"Mouvement Stock Application Started - Version {CURRENT_VERSION}")
     logging.info("=" * 50)
 
 # Initialize logging at module level
@@ -139,18 +139,29 @@ class RetourData:
     NOM_PRENOM: str = ""
     WILAYA: str = ""
 
-class QRScannerApp:
+class QRScannerApp:    
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("QR Code Scanner & Generator")
+        self.root.title("Mouvement Stock - Gestion Entrées/Sorties/Retours")
         self.root.geometry("1280x720")
         
-        # --- FIX: Load Icon using resource_path ---
-        # Assuming you have 'qrcodescan.ico' in the same folder as the script 
-        # (and you bundled it with PyInstaller using the .spec file)
+        # --- Configure application icon for window and taskbar ---
         try:
-            icon_path = 'qrcodescan.ico'
-            self.root.iconbitmap('qrcodescan.ico')
+            # Use resource_path to get the correct icon path
+            icon_path = resource_path('qrcodescan.ico')
+            
+            # Set window icon
+            self.root.iconbitmap(icon_path)
+            
+            # For Windows: Set the taskbar icon (AppUserModelID)
+            if sys.platform.startswith('win'):
+                try:
+                    import ctypes
+                    # Set AppUserModelID to make the taskbar icon work properly
+                    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("DiarDzair.MouvementStock.1.0")
+                except Exception as taskbar_error:
+                    print(f"Warning: Could not set taskbar icon: {taskbar_error}")
+                    
         except Exception as e:
             # If icon fails to load, the app still starts
             print(f"Warning: Could not load application icon. Error: {e}")
@@ -241,9 +252,8 @@ class QRScannerApp:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         main_frame.columnconfigure(1, weight=1)
-        
-        # Title
-        title_label = ttk.Label(main_frame, text="QR Code Scanner & Generator", 
+          # Title
+        title_label = ttk.Label(main_frame, text="Mouvement Stock - Gestion Entrées/Sorties/Retours", 
                                font=('Arial', 16, 'bold'))
         title_label.grid(row=0, column=0, columnspan=3, pady=(0, 20))
         
@@ -256,23 +266,21 @@ class QRScannerApp:
         data_type_combo['values'] = ("Entrée", "Sortie", "Retour")
         data_type_combo.grid(row=0, column=1, padx=(0, 10))
         data_type_combo.bind('<<ComboboxSelected>>', self.on_data_type_change)
-        
-        # File operations frame
-        file_frame = ttk.LabelFrame(main_frame, text="File Operations", padding="10")
+          # File operations frame
+        file_frame = ttk.LabelFrame(main_frame, text="Opérations de Fichier", padding="10")
         file_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
         
-        ttk.Button(file_frame, text="Load Excel File", 
+        ttk.Button(file_frame, text="Charger Fichier Excel", 
                   command=self.load_excel_file).grid(row=0, column=0, padx=(0, 5))
-        ttk.Button(file_frame, text="Save Excel File", 
+        ttk.Button(file_frame, text="Sauvegarder Fichier Excel", 
                   command=self.save_excel_file).grid(row=0, column=1, padx=5)
-        ttk.Button(file_frame, text="Clear All Data", 
+        ttk.Button(file_frame, text="Effacer Toutes Données", 
                   command=self.clear_all_data).grid(row=0, column=2, padx=5)
         
-        self.file_label = ttk.Label(file_frame, text="No file loaded")
+        self.file_label = ttk.Label(file_frame, text="Aucun fichier chargé")
         self.file_label.grid(row=1, column=0, columnspan=3, pady=(10, 0))
-        
-        # Scanner frame
-        scanner_frame = ttk.LabelFrame(main_frame, text="QR Code Scanner", padding="10")
+          # Scanner frame
+        scanner_frame = ttk.LabelFrame(main_frame, text="Scanner de Codes QR", padding="10")
         scanner_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
         
         # Scanner input field
@@ -300,9 +308,8 @@ class QRScannerApp:
         self.status_label = ttk.Label(scanner_frame, text="Ready to scan...", 
                                      foreground="green")
         self.status_label.grid(row=2, column=0, columnspan=2, pady=(10, 0))
-        
-        # Data display frame
-        data_frame = ttk.LabelFrame(main_frame, text="Product Data", padding="10")
+          # Data display frame
+        data_frame = ttk.LabelFrame(main_frame, text="Données Produits", padding="10")
         data_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
         main_frame.rowconfigure(4, weight=1)
         
@@ -310,16 +317,15 @@ class QRScannerApp:
         search_frame = ttk.Frame(data_frame)
         search_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
         search_frame.columnconfigure(1, weight=1)
-        
-        # Search functionality
-        ttk.Label(search_frame, text="Search:").grid(row=0, column=0, padx=(0, 5))
+          # Search functionality
+        ttk.Label(search_frame, text="Rechercher:").grid(row=0, column=0, padx=(0, 5))
         self.search_var = tk.StringVar()
         self.search_var.trace('w', self.on_search_change)
         search_entry = ttk.Entry(search_frame, textvariable=self.search_var, width=30)
         search_entry.grid(row=0, column=1, padx=(0, 10), sticky=(tk.W, tk.E))
         
         # Filter by field
-        ttk.Label(search_frame, text="Filter by:").grid(row=0, column=2, padx=(10, 5))
+        ttk.Label(search_frame, text="Filtrer par:").grid(row=0, column=2, padx=(10, 5))
         self.filter_field = tk.StringVar(value="All Fields")
         self.filter_combo = ttk.Combobox(search_frame, textvariable=self.filter_field, width=15, state="readonly")        
         self.filter_combo['values'] = ("All Fields", "Reference", "Fournisseur", "Designation", 
@@ -360,16 +366,15 @@ class QRScannerApp:
         
         data_frame.columnconfigure(0, weight=1)
         data_frame.rowconfigure(2, weight=1)
-        
-        # QR Generation frame
-        qr_frame = ttk.LabelFrame(main_frame, text="QR Code Generation", padding="10")        
+          # QR Generation frame
+        qr_frame = ttk.LabelFrame(main_frame, text="Génération de Codes QR", padding="10")        
         qr_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
         
         ttk.Button(qr_frame, text="Générer QR Code(s)", 
                   command=self.generate_qr_from_selection).grid(row=0, column=0, padx=(0, 5))
         
         # Minimal skeleton to ensure the app runs
-        main_label = ttk.Label(self.root, text="QR Scanner App", font=('Inter', 24, 'bold'))
+        main_label = ttk.Label(self.root, text="Mouvement Stock", font=('Inter', 24, 'bold'))
         # main_label.pack(pady=50)
         version_label = ttk.Label(self.root, text=f"Version Actuelle: {CURRENT_VERSION}", font=('Inter', 10))
         # version_label.pack(pady=10)
@@ -460,20 +465,19 @@ class QRScannerApp:
         # Clear existing buttons
         for widget in self.crud_frame.winfo_children():
             widget.destroy()
-        
         if self.data_type == "Entrée":
             # For Entrée: Edit and Delete buttons
-            ttk.Button(self.crud_frame, text="Edit Selected", 
+            ttk.Button(self.crud_frame, text="Modifier Sélection", 
                       command=self.edit_selected_record).grid(row=0, column=0, padx=(0, 5))
-            ttk.Button(self.crud_frame, text="Delete Selected", 
+            ttk.Button(self.crud_frame, text="Supprimer Sélection", 
                       command=self.delete_selected_record).grid(row=0, column=1, padx=5)        
         elif self.data_type == "Sortie":
             # For Sortie: Change Client, Delete, and Load Retour File buttons
             ttk.Button(self.crud_frame, text="Changer Client", 
                       command=self.change_client_for_selected).grid(row=0, column=0, padx=(0, 5))
-            ttk.Button(self.crud_frame, text="Delete Selected", 
+            ttk.Button(self.crud_frame, text="Supprimer Sélection", 
                       command=self.delete_selected_record).grid(row=0, column=1, padx=5)
-            ttk.Button(self.crud_frame, text="Load Retour File", 
+            ttk.Button(self.crud_frame, text="Charger Fichier Retour", 
                       command=self.load_retour_file_for_sortie).grid(row=0, column=2, padx=5)
             
             # Add reference panel button if reference data exists
@@ -484,9 +488,9 @@ class QRScannerApp:
             # For Retour: Change Client, Delete, and Load Sortie File buttons
             ttk.Button(self.crud_frame, text="Changer Client", 
                       command=self.change_client_for_selected).grid(row=0, column=0, padx=(0, 5))
-            ttk.Button(self.crud_frame, text="Delete Selected", 
+            ttk.Button(self.crud_frame, text="Supprimer Sélection", 
                       command=self.delete_selected_record).grid(row=0, column=1, padx=5)
-            ttk.Button(self.crud_frame, text="Load Sortie File", 
+            ttk.Button(self.crud_frame, text="Charger Fichier Sortie", 
                       command=self.load_sortie_file_for_retour).grid(row=0, column=2, padx=5)
             
             # Add reference panel button if reference data exists
@@ -3397,7 +3401,7 @@ del "%~f0"
         try:
             # Create About dialog
             about_dialog = tk.Toplevel(self.root)
-            about_dialog.title("À propos de QR Scanner")
+            about_dialog.title("À propos de Mouvement Stock")
             about_dialog.geometry("450x500")
             about_dialog.resizable(False, False)
             about_dialog.transient(self.root)
@@ -3433,9 +3437,8 @@ del "%~f0"
                 print(f"Could not load logo: {e}")
                 # If logo fails to load, show a placeholder
                 ttk.Label(main_frame, text="📷", font=('Arial', 48)).pack(pady=(0, 20))
-            
-            # Application name
-            ttk.Label(main_frame, text="QR Scanner", 
+              # Application name
+            ttk.Label(main_frame, text="Mouvement Stock", 
                      font=('Arial', 20, 'bold'), 
                      foreground='#2c3e50').pack(pady=(0, 10))
             
@@ -3443,11 +3446,10 @@ del "%~f0"
             ttk.Label(main_frame, text=f"Version {CURRENT_VERSION}", 
                      font=('Arial', 12), 
                      foreground='#7f8c8d').pack(pady=(0, 20))
-            
-            # Description
+              # Description
             description_text = (
-                "Application de scan et génération de codes QR\n"
-                "pour la gestion des entrées et sorties de stock"
+                "Application de gestion des mouvements de stock\n"
+                "pour les entrées, sorties et retours de produits"
             )
             ttk.Label(main_frame, text=description_text, 
                      font=('Arial', 11), 
@@ -3496,13 +3498,12 @@ del "%~f0"
             # Set focus on close button
             about_dialog.focus_set()
             
-        except Exception as e:
-            # Fallback simple about dialog if there's any error
+        except Exception as e:            # Fallback simple about dialog if there's any error
             messagebox.showinfo(
-                "À propos de QR Scanner",
-                f"QR Scanner v{CURRENT_VERSION}\n\n"
-                f"Application de scan et génération de codes QR\n"
-                f"pour la gestion des entrées et sorties de stock\n\n"
+                "À propos de Mouvement Stock",
+                f"Mouvement Stock v{CURRENT_VERSION}\n\n"
+                f"Application de gestion des mouvements de stock\n"
+                f"pour les entrées, sorties et retours de produits\n\n"
                 f"Développé par :\n"
                 f"DairDzair E-Commerce & INNOVATION\n\n"
                 f"© 2024-2025 DairDzair E-Commerce & INNOVATION"

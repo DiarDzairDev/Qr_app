@@ -15,24 +15,24 @@ echo "Building application..."
 pyinstaller qr_scanner.spec
 
 # 4. Vérifier que la compilation a réussi
-if [ ! -d "dist/qr_scanner" ]; then
-    echo "Error: Build failed, dist/qr_scanner not found!"
+if [ ! -d "dist/Mouvement Stock" ]; then
+    echo "Error: Build failed, dist/Mouvement Stock not found!"
     exit 1
 fi
 
 # 5. Créer l'archive ZIP
 echo "Creating ZIP package..."
 cd dist
-zip -r qr_scanner.zip qr_scanner/
+zip -r Mouvement Stock.zip Mouvement Stock/
 cd ..
 
 # 6. Vérifier que l'archive a été créée
-if [ -f "dist/qr_scanner.zip" ]; then
-    echo "✅ Package created successfully: dist/qr_scanner.zip"
-    echo "📦 Package size: $(du -h dist/qr_scanner.zip | cut -f1)"
+if [ -f "dist/Mouvement Stock.zip" ]; then
+    echo "✅ Package created successfully: dist/Mouvement Stock.zip"
+    echo "📦 Package size: $(du -h dist/Mouvement Stock.zip | cut -f1)"
     echo ""
     echo "Next steps:"
-    echo "1. Upload dist/qr_scanner.zip to your GitHub repository"
+    echo "1. Upload dist/Mouvement Stock.zip to your GitHub repository"
     echo "2. Update the version number in version.txt"
     echo "3. Make sure REMOTE_PACKAGE_URL points to the correct ZIP file"
 else
