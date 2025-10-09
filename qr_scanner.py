@@ -30,15 +30,15 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- Configuration for Updater ---
 # 1. Define the current version of the running application
-CURRENT_VERSION = "1.1.5" 
+CURRENT_VERSION = "1.1.6" 
 # 2. Define the URL where the latest version number is stored (e.g., a raw file on GitHub)
 #    IMPORTANT: Replace this with the actual URL to a plain text file containing ONLY the latest version number (e.g., "1.0.1")
 REMOTE_VERSION_URL = "https://raw.githubusercontent.com/DiarDzairDev/Qr_app/refs/heads/main/version.txt" # Placeholder URL
 
 # 3. Base URL pattern for releases (version will be inserted dynamically)
 REMOTE_PACKAGE_URL_TEMPLATE = "https://github.com/DiarDzairDev/Qr_app/releases/download/{version}/Mouvement.Stock.zip"
-LOCAL_PACKAGE_FILENAME = "qr_scanner_update.zip"
-LOCAL_EXE_FILENAME = "qr_scanner.exe"
+LOCAL_PACKAGE_FILENAME = "Mouvement Stock Update.zip"
+LOCAL_EXE_FILENAME = "Mouvement Stock.exe"
 
 def get_remote_package_url(version):
     """Generate the download URL for a specific version"""
@@ -55,7 +55,7 @@ def setup_logging():
         # Running as script
         log_dir = os.path.dirname(os.path.abspath(__file__))
     
-    log_file = os.path.join(log_dir, f"qr_scanner_{datetime.now().strftime('%Y%m%d')}.log")
+    log_file = os.path.join(log_dir, f"Mouvement Stock_{datetime.now().strftime('%Y%m%d')}.log")
     
     # Configure logging
     logging.basicConfig(
@@ -2281,23 +2281,23 @@ CUKI I 06/2025"""
             
             self.update_button_in_dialog.config(state=tk.DISABLED, text="Téléchargement en cours...")
             self.update_status_label.config(text=f"Début du téléchargement de V{self.remote_version}...", foreground='blue')
-            
-            # Start download in a new thread
+              # Start download in a new thread
             threading.Thread(target=self._download_and_install, daemon=True).start()    
     
     def _download_and_install(self):
-        """Downloads the new application package (ZIP) and extracts it with progress."""
+        """Downloads the new application package (ZIP) to temp directory for updater stub."""
         # Generate the download URL using the latest version
         remote_package_url = get_remote_package_url(self.remote_version)
         print(f"Downloading new package from: {remote_package_url}")
         
-        # 1. Determine the path to save the new package
-        if getattr(sys, 'frozen', False):
-            install_dir = os.path.dirname(sys.executable)
-        else:
-            install_dir = os.path.dirname(os.path.abspath(__file__))
-
-        package_path = os.path.join(install_dir, LOCAL_PACKAGE_FILENAME)
+        # 1. Determine the temporary path to save the new package (outside app directory)
+        import tempfile
+        temp_dir = tempfile.mkdtemp(prefix="qr_updater_")
+        package_path = os.path.join(temp_dir, LOCAL_PACKAGE_FILENAME)
+        
+        # Store paths for later use by updater stub
+        self.temp_package_path = package_path
+        self.temp_download_dir = temp_dir
         
         try:
             print(f"Starting download from: {remote_package_url}")
@@ -2334,9 +2334,9 @@ CUKI I 06/2025"""
                     if chunk_count % 100 == 0:
                         progress_percent = (bytes_downloaded / total_size * 100) if total_size > 0 else 0
                         print(f"Downloaded {bytes_downloaded}/{total_size} bytes ({progress_percent:.1f}%)")
-                        
-                        # Update progress bar (runs on main thread)
+                          # Update progress bar (runs on main thread)
                         self.root.after(0, lambda val=bytes_downloaded: self.download_progress_bar.config(value=val))
+            
             print(f"Download completed. Total chunks: {chunk_count}")
             print(f"Final downloaded size: {bytes_downloaded} bytes")
             
@@ -2345,84 +2345,13 @@ CUKI I 06/2025"""
             if os.path.exists(package_path):
                 os.remove(package_path)  # Remove existing file if any
             os.rename(temp_package_path, package_path)
-            
-            # Final progress update
+              # Final progress update
             if total_size > 0:
-                self.root.after(0, lambda: self.download_progress_bar.config(value=total_size))
+                self.root.after(0, lambda: self.download_progress_bar.config(value=total_size))            
+                print("Package downloaded successfully, preparing for updater stub...")
             
-            print("Creating update script for Windows...")
-            
-            # 4. Create a batch script that will extract the ZIP and replace all files
-            batch_script_path = os.path.join(install_dir, "update_app.bat")
-            current_exe_name = os.path.basename(sys.executable) if getattr(sys, 'frozen', False) else LOCAL_EXE_FILENAME
-            
-            batch_content = f"""@echo off
-echo Waiting for application to close...
-timeout /t 2 /nobreak >nul
-
-echo Extracting new version...
-powershell -Command "Expand-Archive -Path '{package_path}' -DestinationPath '{install_dir}\\temp_update' -Force"
-
-if %errorlevel% equ 0 (
-    echo Replacing old files...
-    
-    rem Backup current _internal folder if it exists
-    if exist "{install_dir}\\_internal" (
-        echo Backing up _internal folder...
-        move "{install_dir}\\_internal" "{install_dir}\\_internal_backup" >nul 2>&1
-    )
-    
-    rem Copy new files from extracted folder
-    if exist "{install_dir}\\temp_update\\qr_scanner" (
-        echo Copying files from temp_update\\qr_scanner...
-        xcopy /E /Y "{install_dir}\\temp_update\\qr_scanner\\*" "{install_dir}\\" >nul 2>&1
-    ) else if exist "{install_dir}\\temp_update\\_internal" (
-        echo Copying files from temp_update...
-        xcopy /E /Y "{install_dir}\\temp_update\\*" "{install_dir}\\" >nul 2>&1
-    ) else (
-        echo Copying all files from temp_update...
-        xcopy /E /Y "{install_dir}\\temp_update\\*" "{install_dir}\\" >nul 2>&1
-    )
-    
-    if %errorlevel% equ 0 (
-        echo Update successful! Cleaning up...
-        
-        rem Remove backup folder
-        if exist "{install_dir}\\_internal_backup" (
-            rmdir /s /q "{install_dir}\\_internal_backup" >nul 2>&1
-        )
-        
-        rem Remove temporary files
-        del /q "{package_path}" >nul 2>&1
-        rmdir /s /q "{install_dir}\\temp_update" >nul 2>&1
-        
-        echo Restarting application...
-        start "" "{install_dir}\\{current_exe_name}"
-    ) else (
-        echo Update failed! Restoring backup...
-        if exist "{install_dir}\\_internal_backup" (
-            rmdir /s /q "{install_dir}\\_internal" >nul 2>&1
-            move "{install_dir}\\_internal_backup" "{install_dir}\\_internal" >nul 2>&1
-        )
-        echo Error during file replacement. Update aborted.
-        pause
-    )
-) else (
-    echo Failed to extract ZIP file!
-    pause
-)
-
-echo Cleaning up script...
-del "%~f0"
-"""
-            
-            with open(batch_script_path, 'w', encoding='utf-8') as batch_file:
-                batch_file.write(batch_content)
-            
-            print(f"Update script created at: {batch_script_path}")
-            
-            # 5. Schedule the execution of the update script
-            self.root.after(0, lambda: self._execute_update_script(batch_script_path))
+            # 4. Schedule the updater stub launch instead of GUI installation
+            self.root.after(0, lambda: self._prepare_updater_stub_launch())
 
 
         except requests.exceptions.RequestException as e:
@@ -2434,13 +2363,12 @@ del "%~f0"
             error_msg = f"File replacement error (is the EXE locked?): {e}"
             print(error_msg)
             self.root.after(0, lambda: self._handle_download_error(error_msg))
-    
-    def _execute_update_script(self, batch_script_path):
-        """Execute the batch script to update the application (runs on main thread)."""
+    def _prepare_updater_stub_launch(self):
+        """Prepare to launch the updater stub (runs on main thread)."""
         if self.update_dialog and self.update_dialog.winfo_exists():
             self.update_status_label.config(text=f"Mise à jour V{self.remote_version} prête!", foreground='darkgreen')
             self.update_button_in_dialog.config(text="Installer et Redémarrer", state=tk.NORMAL, 
-                                              command=lambda: self._launch_update_script(batch_script_path))
+                                              command=lambda: self._launch_updater_stub())
         
         messagebox.showinfo(
             "Mise à Jour Prête",
@@ -2448,37 +2376,78 @@ del "%~f0"
             f"Cliquez sur 'Installer et Redémarrer' pour finaliser la mise à jour."
         )
     
-    def _launch_update_script(self, batch_script_path):
-        """Launch the update script and close the application."""
+    def _launch_updater_stub(self):
+        """Launch the updater stub and close this application."""
         try:
-            import platform
-            
-            print(f"Launching update script: {batch_script_path}")
-            
             # Close the update dialog first
             if self.update_dialog and self.update_dialog.winfo_exists():
                 self.update_dialog.destroy()
             
-            # Launch the batch script in detached mode
-            if platform.system() == "Windows":
-                # Use CREATE_NEW_PROCESS_GROUP to detach the process
-                subprocess.Popen(['cmd', '/c', batch_script_path], 
-                               creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+            # Get application directory
+            if getattr(sys, 'frozen', False):
+                app_dir = os.path.dirname(sys.executable)
+                current_exe_path = sys.executable
             else:
-                # For other systems (shouldn't happen in this context)
-                subprocess.Popen(['bash', batch_script_path])
+                app_dir = os.path.dirname(os.path.abspath(__file__))
+                current_exe_path = os.path.abspath(__file__)            # Path to updater stub in dedicated updater subdirectory
+            updater_dir = os.path.join(app_dir, "updater")
+            updater_stub_path = os.path.join(updater_dir, "updater_stub.exe")
             
-            print("Update script launched successfully")
+            if not os.path.exists(updater_stub_path):
+                # Try build directory as fallback
+                updater_stub_path = os.path.join(app_dir, "build", "updater", "updater_stub.exe")
+                
+                if not os.path.exists(updater_stub_path):
+                    # Try Python version as fallback
+                    updater_stub_path = os.path.join(app_dir, "updater_stub.py")
+                    if not os.path.exists(updater_stub_path):
+                        raise FileNotFoundError("Updater stub not found in updater/ directory")
             
-            # Close the main application
-            self.root.quit()
+            # Prepare arguments for updater stub (simple format: zip_path install_dir main_exe_path)
+            stub_args = [
+                updater_stub_path,
+                self.temp_package_path,
+                app_dir, 
+                current_exe_path
+            ]
+            
+            print(f"Launching updater stub: {' '.join(stub_args)}")
+            
+            # Launch updater stub
+            if updater_stub_path.endswith('.py'):
+                # Launch Python script
+                subprocess.Popen([sys.executable] + stub_args, cwd=app_dir)
+            else:
+                # Launch executable
+                subprocess.Popen(stub_args, cwd=app_dir)
+            
+            # Give stub time to start
+            time.sleep(1)
+            
+            # Close this application
+            print("Closing main application for update...")
             self.root.destroy()
             
         except Exception as e:
-            print(f"Error launching update script: {e}")
+            print(f"Error launching updater stub: {e}")
             messagebox.showerror("Erreur de Mise à Jour", 
-                               f"Impossible de lancer le script de mise à jour: {str(e)}")
+                               f"Impossible de lancer le programme de mise à jour: {str(e)}\n"
+                               f"Veuillez effectuer la mise à jour manuellement.")
     
+    def _execute_batch_script(self, script_path, install_window):
+        """Legacy method - now redirects to updater stub."""
+        install_window.destroy()
+        self._launch_updater_stub()    
+    # --- Legacy Installation Functions Removed ---
+    # The following functions have been replaced by the updater stub strategy:
+    # - _show_installation_window
+    # - _toggle_log_visibility  
+    # - _add_log_message
+    # - _update_status
+    # - _perform_installation
+    # - _restart_application
+    # These are no longer needed as the updater stub handles all installation logic.
+
     def _handle_download_error(self, message):
         """Updates UI in case of download/install error (runs on main thread)."""
         if self.update_dialog and self.update_dialog.winfo_exists():
