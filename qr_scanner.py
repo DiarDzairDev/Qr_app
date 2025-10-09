@@ -31,18 +31,15 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # --- Configuration for Updater ---
 # 1. Define the current version of the running application
 CURRENT_VERSION = "1.1.6" 
-# 2. Define the URL where the latest version number is stored (e.g., a raw file on GitHub)
-#    IMPORTANT: Replace this with the actual URL to a plain text file containing ONLY the latest version number (e.g., "1.0.1")
-REMOTE_VERSION_URL = "https://raw.githubusercontent.com/DiarDzairDev/Qr_app/refs/heads/main/version.txt" # Placeholder URL
-
-# 3. Base URL pattern for releases (version will be inserted dynamically)
-REMOTE_PACKAGE_URL_TEMPLATE = "https://github.com/DiarDzairDev/Qr_app/releases/download/{version}/Mouvement.Stock.zip"
+# 2. GitHub Releases API URLs
+GITHUB_RELEASES_API_URL = "https://api.github.com/repos/DiarDzairDev/Qr_app/releases/latest"
+GITHUB_LATEST_DOWNLOAD_URL = "https://github.com/DiarDzairDev/Qr_app/releases/latest/download/Mouvement.Stock.zip"
 LOCAL_PACKAGE_FILENAME = "Mouvement Stock Update.zip"
 LOCAL_EXE_FILENAME = "Mouvement Stock.exe"
 
-def get_remote_package_url(version):
-    """Generate the download URL for a specific version"""
-    return REMOTE_PACKAGE_URL_TEMPLATE.format(version=version)
+def get_remote_package_url():
+    """Get the download URL for the latest release"""
+    return GITHUB_LATEST_DOWNLOAD_URL
 
 # --- Logging Configuration ---
 def setup_logging():
@@ -2217,38 +2214,48 @@ CUKI I 06/2025"""
         # Action Button
         self.update_button_in_dialog = ttk.Button(dialog_frame, text="Annuler", command=self.update_dialog.destroy)
         self.update_button_in_dialog.pack(pady=10)
-        
-        # 2. Start Network Check
+          # 2. Start Network Check
         self.update_button_in_dialog.config(state=tk.DISABLED) # Disable button while checking
-        threading.Thread(target=self.check_for_update, daemon=True).start()
-
+        threading.Thread(target=self.check_for_update, daemon=True).start()    
+    
     def check_for_update(self):
-        """Fetches the remote version from the server (runs in a separate thread)."""
-        print(f"Checking remote URL: {REMOTE_VERSION_URL}")
+        """Fetches the latest release information from GitHub API (runs in a separate thread)."""
+        print(f"Checking GitHub releases: {GITHUB_RELEASES_API_URL}")
         try:
             # Simulate network latency
             time.sleep(1.0)
-            response = requests.get(REMOTE_VERSION_URL, timeout=10)
+            response = requests.get(GITHUB_RELEASES_API_URL, timeout=10)
             response.raise_for_status() 
 
-            remote_version = response.text.strip()
+            release_data = response.json()
+            
+            # Extract version from release tag_name
+            remote_version = release_data.get('tag_name', '').strip()
+            
+            # Remove 'v' prefix if present (e.g., "v1.1.7" -> "1.1.7")
+            if remote_version.startswith('v'):
+                remote_version = remote_version[1:]
+            
+            if not remote_version:
+                raise ValueError("No version found in release data")
+            
+            print(f"Found latest release version: {remote_version}")
             
             # Schedule the UI update back on the main Tkinter thread
             self.root.after(0, lambda: self.compare_versions_and_update_ui(remote_version))
 
-        except requests.exceptions.RequestException as e:
-            error_msg = f"Network error: {e.__class__.__name__}"
-            print(error_msg)
-            # Schedule the error message update back on the main Tkinter thread
+        except (requests.exceptions.RequestException, ValueError, KeyError) as e:
+            error_msg = f"GitHub API error: {e.__class__.__name__}"
+            print(f"Error details: {str(e)}")            # Schedule the error message update back on the main Tkinter thread
             self.root.after(0, lambda: self.handle_check_error(error_msg))
 
     def handle_check_error(self, message):
         """Updates UI in case of network error (runs on main thread)."""
         if self.update_dialog and self.update_dialog.winfo_exists():
             self.update_version_label.config(text="Échec")
-            self.update_status_label.config(text="Erreur de connexion au serveur.", foreground='red')
+            self.update_status_label.config(text="Erreur de connexion à GitHub.", foreground='red')
             self.update_button_in_dialog.config(text="Fermer", state=tk.NORMAL, command=self.update_dialog.destroy)
-            messagebox.showerror("Vérification Échouée", f"Impossible de vérifier la mise à jour.\nDétails: {message.split(':')[-1].strip()}")
+            messagebox.showerror("Vérification Échouée", f"Impossible de vérifier la mise à jour sur GitHub.\nDétails: {message.split(':')[-1].strip()}")
 
     def compare_versions_and_update_ui(self, remote_version_str):
         """Compares versions and updates the UI accordingly (runs on main thread)."""
@@ -2283,12 +2290,11 @@ CUKI I 06/2025"""
             self.update_status_label.config(text=f"Début du téléchargement de V{self.remote_version}...", foreground='blue')
               # Start download in a new thread
             threading.Thread(target=self._download_and_install, daemon=True).start()    
-    
     def _download_and_install(self):
         """Downloads the new application package (ZIP) to temp directory for updater stub."""
-        # Generate the download URL using the latest version
-        remote_package_url = get_remote_package_url(self.remote_version)
-        print(f"Downloading new package from: {remote_package_url}")
+        # Use the GitHub latest download URL (always gets the latest release)
+        remote_package_url = get_remote_package_url()
+        print(f"Downloading latest package from: {remote_package_url}")
         
         # 1. Determine the temporary path to save the new package (outside app directory)
         import tempfile
